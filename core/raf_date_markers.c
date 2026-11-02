@@ -17,12 +17,16 @@ static int ymd(const unsigned char *p,unsigned int n,unsigned int i,
     if(k==4U&&(p[i+4U]=='-'||p[i+4U]=='/'||p[i+4U]=='_')&&p[i+7U]==p[i+4U]&&
        dig(p[i+5U])&&dig(p[i+6U])&&dig(p[i+8U])&&dig(p[i+9U])){
       *y=read4(p+i);*m=read2(p+i+5U);*d=read2(p+i+8U);
-      *len=10U;*style=(p[i+4U]=='-')?RAF_DATE_ISO:\n         (p[i+4U]=='_')?RAF_DATE_UNDER_YMD:RAF_DATE_SLASH_YMD;
+      *len=10U;*style=(p[i+4U]=='-')?RAF_DATE_ISO:
+         (p[i+4U]=='_')?RAF_DATE_UNDER_YMD:RAF_DATE_SLASH_YMD;
       return 1;
     }
-    if(dig(p[i])&&dig(p[i+1U])&&(p[i+2U]=='/'||p[i+2U]=='-'||p[i+2U]=='_'||p[i+2U]=='.')&&\n       dig(p[i+3U])&&dig(p[i+4U])&&p[i+5U]==p[i+2U]&&dig(p[i+6U])&&dig(p[i+7U])&&dig(p[i+8U])&&dig(p[i+9U])){
+    if(dig(p[i])&&dig(p[i+1U])&&(p[i+2U]=='/'||p[i+2U]=='-'||p[i+2U]=='_'||p[i+2U]=='.')&&
+       dig(p[i+3U])&&dig(p[i+4U])&&p[i+5U]==p[i+2U]&&dig(p[i+6U])&&dig(p[i+7U])&&dig(p[i+8U])&&dig(p[i+9U])){
       *y=read4(p+i+6U);*m=read2(p+i+3U);*d=read2(p+i);
-      *len=10U;*style=(p[i+2U]=='/')?RAF_DATE_SLASH_DMY:\n        (p[i+2U]=='-')?RAF_DATE_DASH_DMY:\n        (p[i+2U]=='_')?RAF_DATE_UNDER_DMY:RAF_DATE_DOT_DMY;return 1;
+      *len=10U;*style=(p[i+2U]=='/')?RAF_DATE_SLASH_DMY:
+        (p[i+2U]=='-')?RAF_DATE_DASH_DMY:
+        (p[i+2U]=='_')?RAF_DATE_UNDER_DMY:RAF_DATE_DOT_DMY;return 1;
     }
   }
   if(n-i>=8U){
