@@ -73,7 +73,9 @@ def fetch(url, live=False):
                           "bytes": len(body), "sha256": hashlib.sha256(body).hexdigest()}
     except urllib.error.HTTPError as exc:
         location = exc.headers.get("Location", "")
+        target = urllib.parse.urljoin(url, location) if location else ""
         return None, {"state": "HTTP_" + str(exc.code),
+                      "redirect_to_scoped_origin": target if live and target in variants() else None,
                       "location_sha256": hashlib.sha256(location.encode()).hexdigest()
                                          if location else None}
     except Exception as exc:
