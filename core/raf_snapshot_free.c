@@ -3,11 +3,16 @@
 #include "raf_sha256_free.h"
 int raf_snapshot_bytes(const unsigned char *html,unsigned int n,
                        struct raf_snapshot *out) {
-  struct raf_snapshot t = {0};
+  struct raf_snapshot t;
+  volatile unsigned char *zero_bytes=(volatile unsigned char *)&t;
+  volatile unsigned char *dst_bytes;
+  volatile const unsigned char *src_bytes;
+  unsigned int byte_i;
   struct raf_html_event e;
   unsigned int cursor=0U;
   int r;
   if(!html||!out||n>1048576U)return -1;
+  for(byte_i=0U;byte_i<(unsigned int)sizeof(t);++byte_i)zero_bytes[byte_i]=0U;
   if(raf_sha256_free(html,n,t.raw_sha256)!=0)return -1;
   while((r=raf_html_next(html,n,&cursor,&e))>0) {
     if(e.flags&RAF_F_ENDTAG)continue;
@@ -46,6 +51,8 @@ int raf_snapshot_bytes(const unsigned char *html,unsigned int n,
     if(e.flags&RAF_F_INC)++t.inc_refs;
   }
   if(r<0)return r;
-  *out=t;
+  dst_bytes=(volatile unsigned char *)out;
+  src_bytes=(volatile const unsigned char *)&t;
+  for(byte_i=0U;byte_i<(unsigned int)sizeof(t);++byte_i)dst_bytes[byte_i]=src_bytes[byte_i];
   return 0;
 }
