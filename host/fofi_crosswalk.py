@@ -358,6 +358,16 @@ def git_uniqueness(git):
   "same_sha_in_both_scoped_repo_samples":len(official&fork),
   "scope":"sampled provider observations, not global repository history or personal actions"}
 
+def terminal_coverage(web,git):
+ missing_archive=[name for name,v in web.items()
+                  if not any("analysis" in m for m in v["mementos"])]
+ missing_git=[repo for repo,v in git.items()
+              if not v["records"].get("commits")]
+ return {"state":"PASS_SCOPED" if not missing_archive and not missing_git else "BLOCKED_PARTIAL_SOURCES",
+         "required_archive_targets":list(WEB),"missing_archive_targets":missing_archive,
+         "required_git_repositories":list(REPOS),"missing_git_repositories":missing_git,
+         "rule":"Every requested site has >=1 HTML replay and every required Git repo has >=1 commit. No WARC/rights/authorship claims."}
+
 def temporal_crosswalk(web,git):
  web_days=[]
  for name,scope in web.items():
@@ -398,6 +408,7 @@ def main():
     "GITHUB":"public REST API event metadata, not proof of human actor"},
    "archive":web,"github":git,
    "git_scope_uniqueness":git_uniqueness(git),
+   "evidence_gate":terminal_coverage(web,git),
    "temporal_crosswalk":temporal_crosswalk(web,git),
    "rights":"TOKEN_VAZIO_REVIEW_REQUIRED","human_operator":"TOKEN_VAZIO_NOT_ATTESTED",
    "html_bodies_published":False,"photo_bodies_downloaded":False,
@@ -411,6 +422,7 @@ def main():
                   "status":v["query_statuses"]} for k,v in record.get("archive",{}).items()},
   "github":{k:{kind:len(v["records"][kind]) for kind in API_KINDS} for k,v in record.get("github",{}).items()},
   "git_unique":record.get("git_scope_uniqueness",{}).get("unique_scoped_ids","TOKEN_VAZIO"),
+  "coverage_gate":record.get("evidence_gate",{}).get("state","TOKEN_VAZIO"),
   "temporal_pairs":record.get("temporal_crosswalk",{}).get("observed_pairs","TOKEN_VAZIO")},
   sort_keys=True))
 if __name__=="__main__":main()
