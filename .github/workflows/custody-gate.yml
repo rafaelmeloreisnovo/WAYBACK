@@ -71,6 +71,30 @@ jobs:
             sha256sum "out/objects/$arch.o" > "out/objects/$arch.SHA256SUMS"
           done
           printf '%s\n' 'IMPLEMENTATION=freestanding object, not physical-device execution' > out/objects/SCOPE.txt
+
+      - name: V2 C freestanding HTML event + UTC correlation tests
+        run: |
+          set -euo pipefail
+          cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic \
+            core/raf_evidence_v2.c tests/test_evidence_v2.c -o /tmp/raf-evidence-v2
+          /tmp/raf-evidence-v2
+          # Host sanitizers are a distinct proof from embedded/freestanding object compilation.
+          clang -std=c99 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            core/raf_evidence_v2.c tests/test_evidence_v2.c -o /tmp/raf-evidence-asan
+          /tmp/raf-evidence-asan
+          mkdir -p out/objects
+          for arch in x86_64-unknown-none armv7-none-eabi aarch64-none-elf; do
+            clang "--target=$arch" -std=c99 -O2 -Wall -Wextra -Werror \
+              -ffreestanding -fno-builtin -fno-stack-protector \
+              -c core/raf_evidence_v2.c -o "out/objects/v2-$arch.o"
+            test -z "$(nm -u "out/objects/v2-$arch.o")"
+            readelf -h "out/objects/v2-$arch.o" > "out/objects/v2-$arch.elf.txt"
+            sha256sum "out/objects/v2-$arch.o" > "out/objects/v2-$arch.SHA256SUMS"
+          done
+          printf '%s\n' 'v2=tag-boundary/html-attrs/UTC-correlation; archive-WARC=TOKEN_VAZIO_NOT_EXECUTED' \
+            > out/objects/V2_SCOPE.txt
+
       - name: Produce synthetic receipt without networking
         run: |
           set -euo pipefail
