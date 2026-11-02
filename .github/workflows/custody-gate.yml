@@ -131,6 +131,61 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+
+  public-provider-metadata:
+    name: Historical public CDX/Git metadata (bounded; evidence-gated)
+    if: ${{ github.event_name == 'pull_request' }}
+    needs: synthetic-gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact PR source with no persistent token
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Assert exact source and hosted-adapter negative tests
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          python3 -m unittest discover -s tests -p 'test_probe_public.py' -v
+          python3 -m py_compile host/probe_public.py
+      - name: Build C99 freestanding correlation code for host bridge
+        run: |
+          set -euo pipefail
+          cc -std=c99 -O2 -Wall -Wextra -Werror -fPIC -shared \
+            -ffreestanding -fno-builtin -fno-stack-protector \
+            core/raf_evidence_v2.c -o /tmp/libraf-timeline-v2.so
+      - name: Probe allowlisted public CDX and GitHub metadata once
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python3 host/probe_public.py --core-so /tmp/libraf-timeline-v2.so --output-dir out/provider
+          ( cd out/provider && sha256sum -c SHA256SUMS )
+      - name: Historical source gate (unavailable archive is BLOCKED, not zero)
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('out/provider/receipt.json').read_text())
+          if not any(r['archive_metadata'].values()):
+              print('BLOCKED_ARCHIVE_CAPTURE_METADATA_NOT_RETRIEVED')
+              raise SystemExit(2)
+          print('HISTORICAL_CDX_METADATA_OBSERVED_NOT_WARC_VERIFIED')
+          PY
+      - name: Preserve public-metadata-only receipt, including blocked states
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: wayback-public-metadata-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/provider/
+          if-no-files-found: warn
+          retention-days: 90
+
   manually-authorized-public-get:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_live && inputs.human_public_fetch_authorization }}
     needs: synthetic-gates
