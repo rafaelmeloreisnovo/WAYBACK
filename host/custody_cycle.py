@@ -486,7 +486,7 @@ def verify_previous(blob, lane):
             raise ValueError("CHAIN_PARENT_MISMATCH")
         return state, sha(contents["receipt.json"])
 
-def previous_state(lane, provided_run, allow_bootstrap):
+def artifact_blob(lane, provided_run):
     token = os.environ.get("GITHUB_TOKEN", "")
     if not token:
         raise ValueError("PREVIOUS_ARTIFACT_REQUIRES_GITHUB_TOKEN")
@@ -513,9 +513,7 @@ def previous_state(lane, provided_run, allow_bootstrap):
                 (not provided_run or (a.get("workflow_run") or {}).get("id") == provided_run)]
     eligible.sort(key=lambda a: (a.get("created_at", ""), a.get("id", 0)), reverse=True)
     if not eligible:
-        if allow_bootstrap and not provided_run:
-            return state_for(lane), "TOKEN_VAZIO_FIRST_CYCLE_NO_PREVIOUS_ARTIFACT"
-        raise ValueError("BLOCKED_PREVIOUS_ARTIFACT_NOT_FOUND")
+        return None, None
     artifact = eligible[0]
     source_url = api_root + "/actions/artifacts/" + str(artifact["id"]) + "/zip"
     req = urllib.request.Request(source_url, headers={
@@ -536,8 +534,16 @@ def previous_state(lane, provided_run, allow_bootstrap):
             p.hostname.endswith(".actions.githubusercontent.com")):
         raise ValueError("UNKNOWN_ARTIFACT_HOST")
     raw = urllib.request.urlopen(location, timeout=20).read(MAX_ZIP + 1)
-    state, digest = verify_previous(raw, lane)
-    return state, digest
+    return raw, {"artifact_id": artifact["id"], "created_at": artifact.get("created_at"),
+                 "name": artifact.get("name"), "source_run": (artifact.get("workflow_run") or {}).get("id")}
+
+def previous_state(lane, provided_run, allow_bootstrap):
+    raw, metadata = artifact_blob(lane, provided_run)
+    if raw is None:
+        if allow_bootstrap and not provided_run:
+            return state_for(lane), "TOKEN_VAZIO_FIRST_CYCLE_NO_PREVIOUS_ARTIFACT"
+        raise ValueError("BLOCKED_PREVIOUS_ARTIFACT_NOT_FOUND")
+    return verify_previous(raw, lane)
 
 def write_receipt(output, state, records, gate, parent, lane):
     folder = Path(output)
