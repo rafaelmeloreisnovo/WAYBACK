@@ -43,6 +43,16 @@ class CrossTimelineTests(unittest.TestCase):
         self.assertEqual(mismatch, 2)
         self.assertEqual(rows[0]["provider_digest"], "A")
 
+    def test_reis_domains_never_merge_by_suffix(self):
+        archive_origin = "https://reisoffice.com/"
+        distinct_origin = "https://reisoffice.com.br/"
+        payload = json.dumps([["timestamp","original","statuscode","mimetype","digest","length"],
+            ["20080501153240",archive_origin,"200","text/html","SAME","10"],
+            ["20080501153240",distinct_origin,"200","text/html","SAME","10"]]).encode()
+        observed, rejected = m.cdx_rows(payload, archive_origin)
+        self.assertEqual((len(observed), rejected), (1, 1))
+        self.assertEqual(observed[0]["original"], archive_origin)
+
     def test_missing_is_not_zero(self):
         self.assertEqual(m.cdx_rows(b"[]", m.variants()[0]), ([],0))
         with self.assertRaises(ValueError):
