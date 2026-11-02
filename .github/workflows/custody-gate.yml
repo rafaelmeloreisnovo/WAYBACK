@@ -42,6 +42,27 @@ on:
         type: boolean
         default: true
         required: true
+      run_custody_cycle:
+        description: "Run three read-only custody lanes in parallel; incremental receipts"
+        type: boolean
+        default: false
+        required: true
+      custody_bootstrap_if_empty:
+        description: "Start first cycle only if no prior signed artifact exists"
+        type: boolean
+        default: false
+        required: true
+      custody_previous_run:
+        description: "Optional specific prior Actions run ID; zero selects latest per lane"
+        type: string
+        default: "0"
+        required: true
+      custody_budget:
+        description: "Maximum online GETs per lane per cycle"
+        type: choice
+        options: ["8", "12", "16"]
+        default: "12"
+        required: true
 
 permissions:
   contents: read
@@ -72,7 +93,8 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s tests -p 'test_wayback.py' -v
           python3 -m unittest discover -s tests -p 'test_cross_timeline.py' -v
-          python3 -m py_compile host/observe.py host/cross_timeline.py
+          python3 -m unittest discover -s tests -p 'test_custody_cycle.py' -v
+          python3 -m py_compile host/observe.py host/cross_timeline.py host/custody_cycle.py
       - name: Host C test and three freestanding object compile gates
         run: |
           set -euo pipefail
@@ -350,5 +372,56 @@ jobs:
         with:
           name: wayback-cross-timeline-${{ github.run_id }}-${{ github.run_attempt }}
           path: out/cross-*/
+          if-no-files-found: warn
+          retention-days: 90
+
+  custody-incremental:
+    name: Custody cycle / ${{ matrix.lane }} / bounded provenance
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_custody_cycle && inputs.human_public_fetch_authorization }}
+    needs: synthetic-gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        lane: [blake, cesar, reis]
+    permissions:
+      contents: read
+      actions: read
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Checkout source SHA without persisted token
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate custody invariants offline before any public fetch
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p test_custody_cycle.py -v
+          python3 -m py_compile host/custody_cycle.py
+      - name: Bounded online collection with prior artifact checksum verification
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CUSTODY_LANE: ${{ matrix.lane }}
+          CUSTODY_BUDGET: ${{ inputs.custody_budget }}
+          PREVIOUS_RUN: ${{ inputs.custody_previous_run }}
+          BOOTSTRAP: ${{ inputs.custody_bootstrap_if_empty }}
+        run: |
+          set -euo pipefail
+          case "$PREVIOUS_RUN" in ''|*[!0-9]*) echo INVALID_PREVIOUS_RUN_ID; exit 2;; esac
+          mkdir -p out
+          args=()
+          if [ "$BOOTSTRAP" = "true" ]; then args+=(--bootstrap-if-empty); fi
+          python3 host/custody_cycle.py --lane "$CUSTODY_LANE" --budget "$CUSTODY_BUDGET" --previous-run "$PREVIOUS_RUN" "${args[@]}" --output "out/custody-$CUSTODY_LANE-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          (cd "out/custody-$CUSTODY_LANE-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" && sha256sum -c SHA256SUMS)
+      - name: Preserve one unique append-only receipt for this lane/cycle
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: wayback-custody-${{ matrix.lane }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/custody-*/
           if-no-files-found: warn
           retention-days: 90
