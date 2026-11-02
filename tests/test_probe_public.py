@@ -40,10 +40,15 @@ class TestPublicProbe(unittest.TestCase):
    p.contents.month_apart_clock_match=1
    p.contents.within_window=0
    p.contents.same_clock_minute=1
+   p.contents.month_distance=210
+   p.contents.same_calendar_day=1
+   p.contents.exact_one_month=0
    return 0
   archive={"www.cesarreis.com.br":[{"timestamp":"20030721165004"}]}
   git={"BLAKE3-team/BLAKE3":[{"timestamp":"20261101065614","sha":"a"*40}]}
   matched,truncated=m.compare(archive,git,fake)
   self.assertFalse(truncated)
-  self.assertEqual(matched[0]["classification"],"CLOCK_COINCIDENCE_NOT_CAUSAL_EVIDENCE")
+  self.assertEqual(matched[0]["classification"],"SAME_CLOCK_DIFFERENT_DATE_NOT_CAUSAL_EVIDENCE")
+  self.assertEqual(matched[0]["month_distance"],210)
+  self.assertFalse(matched[0]["exact_one_month"])
 if __name__=="__main__":unittest.main()
