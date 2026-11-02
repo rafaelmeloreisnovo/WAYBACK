@@ -1,0 +1,117 @@
+name: WAYBACK Omega FOFI public evidence
+
+on:
+  pull_request:
+    paths:
+      - "core/raf_date_markers.*"
+      - "host/fofi_crosswalk.py"
+      - "tests/test_date_markers.c"
+      - "tests/test_fofi_crosswalk.py"
+      - ".github/workflows/fofi-crosswalk.yml"
+  workflow_dispatch:
+    inputs:
+      run_public_provider_probe:
+        type: boolean
+        description: "Authorize bounded read-only public provider requests"
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fofi-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  freestanding-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert exact revision, C tests and cross-ABI objects
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          mkdir -p out
+          cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic core/raf_date_markers.c tests/test_date_markers.c -o /tmp/date-test
+          /tmp/date-test
+          clang -std=c99 -O1 -g -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined core/raf_date_markers.c tests/test_date_markers.c -o /tmp/date-sanitized
+          /tmp/date-sanitized
+          python3 -m unittest discover -s tests -p 'test_fofi_crosswalk.py' -v
+          python3 -m py_compile host/fofi_crosswalk.py
+          for arch in x86_64-unknown-none armv7-none-eabi aarch64-none-elf; do
+            clang "--target=$arch" -std=c99 -O2 -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector -c core/raf_date_markers.c -o "out/date-$arch.o"
+            test -z "$(nm -u "out/date-$arch.o")"
+            readelf -h "out/date-$arch.o" > "out/date-$arch.elf.txt"
+          done
+      - name: Offline C parsing fixture
+        run: |
+          set -euo pipefail
+          cc -std=c99 -O2 -Wall -Wextra -Werror -fPIC -shared -ffreestanding -fno-builtin core/raf_date_markers.c core/raf_evidence_v2.c core/raf_sha256_free.c core/raf_snapshot_free.c -o /tmp/libfofi.so
+          python3 host/fofi_crosswalk.py --core-so /tmp/libfofi.so --out out/offline --offline
+          (cd out/offline && sha256sum -c SHA256SUMS)
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path("out/offline/receipt.json").read_text())
+          assert r["kind"]=="SYNTHETIC_ONLY"
+          assert r["sample"]["date_marker_count"]==2
+          assert any(x["context"]=="IMAGE_TAG_LITERAL" for x in r["sample"]["date_marker_examples"])
+          PY
+      - name: Preserve test-only evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: fofi-core-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/
+          if-no-files-found: warn
+          retention-days: 90
+
+  bounded-public-providers:
+    needs: freestanding-contracts
+    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_public_provider_probe) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Collect bounded public historical HTML and BLAKE3 events
+        run: |
+          set -euo pipefail
+          cc -std=c99 -O2 -Wall -Wextra -Werror -fPIC -shared -ffreestanding -fno-builtin core/raf_date_markers.c core/raf_evidence_v2.c core/raf_sha256_free.c core/raf_snapshot_free.c -o /tmp/libfofi.so
+          mkdir -p out
+          python3 host/fofi_crosswalk.py --core-so /tmp/libfofi.so --out out/public
+          (cd out/public && sha256sum -c SHA256SUMS)
+      - name: Source presence gate — absence is not zero
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path("out/public/receipt.json").read_text())
+          a=sum("analysis" in e for v in r["archive"].values() for e in v["mementos"])
+          g=sum(len(x) for v in r["github"].values() for x in v["records"].values())
+          print("OBSERVED_ARCHIVE_HTML",a,"OBSERVED_GITHUB_PUBLIC_EVENTS",g)
+          assert r["claim_allowed"] is False
+          if a==0 or g==0:
+              print("BLOCKED_SOURCE_NOT_ZERO")
+              raise SystemExit(2)
+          print("PASS_SCOPED_NOT_WARC_NOT_HUMAN_AUTHORSHIP")
+          PY
+      - name: Preserve receipts without raw images, comment bodies or HTML
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: fofi-wayback-blake3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/public/
+          if-no-files-found: warn
+          retention-days: 90
