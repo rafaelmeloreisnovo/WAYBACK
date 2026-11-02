@@ -7,6 +7,14 @@ sp=importlib.util.spec_from_file_location("probe_public",p)
 m=importlib.util.module_from_spec(sp)
 sp.loader.exec_module(m)
 class TestPublicProbe(unittest.TestCase):
+ def test_disjoint_era_windows(self):
+  self.assertEqual(m.TIME_WINDOWS,(("1996","2005"),("2006","2018"),("2019","2026")))
+  url=m.cdx_url("www.reisoffice.com.br","2019","2026")
+  from urllib.parse import parse_qs,urlsplit
+  q=parse_qs(urlsplit(url).query)
+  self.assertEqual(q["from"],["2019"])
+  self.assertEqual(q["to"],["2026"])
+  self.assertEqual(q["limit"],["24"])
  def test_allowed(self):
   self.assertTrue(m.permitted(m.cdx_url("www.cesarreis.com.br")))
   self.assertTrue(m.permitted(m.git_url("BLAKE3-team/BLAKE3")))
