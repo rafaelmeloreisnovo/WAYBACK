@@ -15,9 +15,10 @@ spec.loader.exec_module(m)
 
 class CustodyTests(unittest.TestCase):
     def test_origin_matrix(self):
-        for lane in ("cesar", "reis"):
-            self.assertEqual(len(m.origins(lane)), 4)
-            self.assertEqual(len(set(m.origins(lane))), 4)
+        for lane, count in (("cesar",4), ("reis",8)):
+            self.assertEqual(len(m.origins(lane)), count)
+            self.assertEqual(len(set(m.origins(lane))), count)
+        self.assertIn("https://reisoffice.com/", m.origins("reis"))
 
     def test_original_url_validation(self):
         self.assertTrue(m.source_allowed("https://www.cesarreis.com.br/telas/prodfto.asp", "cesar"))
