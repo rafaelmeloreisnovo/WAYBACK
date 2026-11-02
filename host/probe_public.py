@@ -64,6 +64,7 @@ def git_url(repo):
 
 def read_cdx(payload):
     j=json.loads(payload)
+    if j==[]:return []  # Empty result from this bounded query, not proof the site did not exist.
     if not isinstance(j,list) or not j or not isinstance(j[0],list):
         raise ValueError("INVALID_CDX_HEADER")
     names=j[0]
@@ -159,6 +160,7 @@ def main():
             if data is None:continue
             try:
                 batch=read_cdx(data)
+                if not batch:status[key]="OK_HTTP_200_EMPTY_BOUNDED_CDX_QUERY"
                 for item in batch:item["window"]=year_from+"_"+year_to
                 archive[host].extend(batch)
             except Exception as exc:
