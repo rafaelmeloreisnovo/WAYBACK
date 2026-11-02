@@ -83,4 +83,15 @@ class FofiTests(unittest.TestCase):
    for ts,original in anchors:
     self.assertTrue(m.origin_allowed(original,name))
     self.assertTrue(m.permitted(m.replay_url(name,ts,original)))
+ def test_terminal_gate_does_not_promote_partial_archive(self):
+  web={k:{"mementos":[]} for k in m.WEB}
+  web["cesar_root"]["mementos"]=[{"analysis":{"raw":"known"}}]
+  git={repo:{"records":{"commits":[{"sha":"a"*40}]}} for repo in m.REPOS}
+  gate=m.terminal_coverage(web,git)
+  self.assertEqual(gate["state"],"BLOCKED_PARTIAL_SOURCES")
+  self.assertIn("reis_root",gate["missing_archive_targets"])
+  self.assertIn("cesar_prodfto",gate["missing_archive_targets"])
+  web["cesar_prodfto"]["mementos"]=[{"analysis":{"raw":"known"}}]
+  web["reis_root"]["mementos"]=[{"analysis":{"raw":"known"}}]
+  self.assertEqual(m.terminal_coverage(web,git)["state"],"PASS_SCOPED")
 if __name__=="__main__":unittest.main()
