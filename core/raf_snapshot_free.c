@@ -3,8 +3,7 @@
 #include "raf_sha256_free.h"
 int raf_snapshot_bytes(const unsigned char *html,unsigned int n,
                        struct raf_snapshot *out) {
-  struct raf_snapshot t = {{0U},{0U},{0U},
-    0U,0U,0U,0U,0U,0U,0U,0U,0U,0U,0U,0U,0U,0U,0U,0U};
+  struct raf_snapshot t = {0};
   struct raf_html_event e;
   unsigned int cursor=0U;
   int r;
