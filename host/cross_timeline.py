@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Read-only, bounded historical CDX x GitHub issue/PR/commit correlation.
-8 exact origin variants (2 domains x www x HTTP/S); live probes are diagnostic.
+12 exact origin variants (3 distinct domains x www x HTTP/S); live probes are diagnostic.
 An observed temporal match is NOT authorship, causality, or original WARC proof.
 Python stdlib hosted I/O; existing freestanding C core remains unchanged.
 """
@@ -15,7 +15,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-DOMAINS = ("cesarreis.com.br", "reisoffice.com.br")
+DOMAINS = ("cesarreis.com.br", "reisoffice.com.br", "reisoffice.com")
 REPOS = ("BLAKE3-team/BLAKE3", "rafaelmeloreisnovo/BLAKE3",
          "rafaelmeloreisnovo/WAYBACK", "rafaelmeloreisnovo/actions", "gradle/actions")
 PAGE_SIZE = 100
@@ -284,7 +284,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--output", required=True)
     p.add_argument("--pages", type=int, default=8, choices=(2, 8, 20))
-    p.add_argument("--live", action="store_true", help="Explicit public GET for eight URL variants")
+    p.add_argument("--live", action="store_true", help="Explicit public GET for twelve URL variants")
     p.add_argument("--authorized", action="store_true")
     args = p.parse_args()
     if not args.authorized:
