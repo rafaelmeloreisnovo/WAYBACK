@@ -223,7 +223,7 @@ def collect_git(repo, kind, pages):
             "coverage": "BOUNDED_GITHUB_API_PAGES"}
 
 def correlate(archive, events):
-    stamps = sorted((parse_date(r["timestamp"]), r) for r in archive)
+    stamps = sorted(((parse_date(r["timestamp"]), r) for r in archive), key=lambda x: (x[0], x[1]["original"]))
     times = [p[0] for p in stamps]
     candidate_rows, totals = [], {"within_1_day": 0, "within_7_days": 0,
                                   "within_30_days": 0, "same_utc_day": 0}
