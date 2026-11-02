@@ -208,7 +208,7 @@ def analyze_html(lib,raw):
  buffer=ctypes.create_string_buffer(raw)
  snap=Snapshot()
  if lib.raf_snapshot_bytes(buffer,len(raw),ctypes.byref(snap))!=0:raise ValueError("SNAPSHOT_REJECTED")
- cur=ctypes.c_uint(0);event=HtmlEvent();ranges=[]
+ cur=ctypes.c_uint(0);event=HtmlEvent();ranges=[];edge_map={};edge_occurrences=0
  # Assign a date token's context only if it lies inside a parsed tag.
  while True:
   rc=lib.raf_html_next(buffer,len(raw),ctypes.byref(cur),ctypes.byref(event))
@@ -216,6 +216,20 @@ def analyze_html(lib,raw):
   if rc<0:raise ValueError("HTML_EVENT_REJECTED")
   if not(event.flags&128) and event.kind in (2,3,4,5,6,7,8):
    ranges.append((int(event.tag.begin),int(event.tag.end),int(event.kind)))
+   if event.kind in (3,4,7,8):
+    a,b=int(event.value.begin),int(event.value.end)
+    if b<a or b>len(raw):raise ValueError("HTML_SOURCE_SPAN_OUTSIDE_BUFFER")
+    if b>a:
+     edge_occurrences+=1
+     value=raw[a:b]
+     identifier=digest(value)
+     path=value.split(b"?",1)[0].split(b"#",1)[0].lower()
+     extension=path.rsplit(b".",1)[-1] if b"." in path else b""
+     if extension not in (b"asp",b"htm",b"html",b"jpg",b"jpeg",b"png",
+                          b"gif",b"pdf",b"js",b"css",b"inc",b"webp"):extension=b"other"
+     edge_map.setdefault(identifier,{"href_sha256":identifier,
+       "source_tag":{3:"ANCHOR",4:"IMAGE_REF",7:"SCRIPT_REF",8:"RESOURCE_REF"}.get(event.kind,"OTHER"),
+       "extension":extension.decode("ascii")})
  cur=ctypes.c_uint(0);mark=Marker();dates=[];total=0
  while True:
   rc=lib.raf_next_date(buffer,len(raw),ctypes.byref(cur),ctypes.byref(mark))
@@ -240,7 +254,13 @@ def analyze_html(lib,raw):
   "counts":{k:int(getattr(snap,k)) for k in fields},
   "date_marker_count":total,"date_marker_examples":dates,
   "date_marker_truncated":total>MAX_MARKERS,
-  "date_semantics":"LITERAL_IN_HTML_NOT_PHOTO_CREATION_PROOF"}
+  "date_semantics":"LITERAL_IN_HTML_NOT_PHOTO_CREATION_PROOF",
+  "edge_occurrences":edge_occurrences,
+  "distinct_hashed_edges":len(edge_map),
+  "edge_index_sha256":digest("|".join(sorted(edge_map))),
+  "hashed_edge_examples":[edge_map[k] for k in sorted(edge_map)[:64]],
+  "edge_examples_truncated":len(edge_map)>64,
+  "edge_semantics":"RAW_REPLAY_ATTRIBUTE_HASH_NOT_CANONICAL_ORIGIN_LINK"}
 
 def collect_web(lib):
  out={}
@@ -298,6 +318,8 @@ def collect_web(lib):
       "keywords_changed":x["keywords_value_sha256"]!=y["keywords_value_sha256"],
       "links_count_changed":x["counts"]["links"]!=y["counts"]["links"],
       "image_count_changed":x["counts"]["images"]!=y["counts"]["images"],
+      "distinct_edge_count_changed":x["distinct_hashed_edges"]!=y["distinct_hashed_edges"],
+      "edge_set_changed":x["edge_index_sha256"]!=y["edge_index_sha256"],
       "source_class":"REPLAY_HTML_NOT_ORIGINAL_WARC"})
   obj["changes"]=changes
   out[name]=obj
