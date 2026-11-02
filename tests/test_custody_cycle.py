@@ -35,6 +35,16 @@ class CustodyTests(unittest.TestCase):
         self.assertEqual((len(found),bad),(1,1))
         self.assertTrue(found[0]["source_url"].endswith("prodfto.asp"))
 
+    def test_reis_hosts_remain_independent_cdx_sources(self):
+        com = "http://reisoffice.com/"
+        br = "http://reisoffice.com.br/"
+        payload = json.dumps([["timestamp","original","statuscode","mimetype","digest","length"],
+            ["20080501153240",com,"200","text/html","MATCH","12"],
+            ["20080501153240",br,"200","text/html","MATCH","12"]]).encode()
+        found, rejected = m.cdx_records(payload, "reis", requested_origin=com)
+        self.assertEqual((len(found), rejected), (1, 1))
+        self.assertNotEqual(m.sha(com), m.sha(br))
+
     def test_query_value_is_not_persisted(self):
         payload = json.dumps([["timestamp","original","statuscode","digest"],
             ["20060701000000","http://cesarreis.com.br/?token=private-example","200","H"]]).encode()
