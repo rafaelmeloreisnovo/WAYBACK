@@ -42,6 +42,7 @@ def github_url(repo,kind):
  base="https://api.github.com/repos/"+repo+"/"+kind
  q={"per_page":str(PROVIDER_LIMIT)}
  if kind in ("pulls","issues"):q.update({"state":"all","sort":"updated","direction":"desc"})
+ if kind in ("issues/comments","pulls/comments"):q.update({"sort":"updated","direction":"desc"})
  return base+"?"+urllib.parse.urlencode(q)
 
 def cdx_url(name,era):
@@ -249,15 +250,20 @@ def collect_web(lib):
    if not records:obj["query_statuses"][key]="OK_EMPTY_BOUNDED_QUERY"
    # One memento from each era. Never brute-force links/images.
    if not records:continue
-   item=records[0];ts=item["timestamp"]
-   url=replay_url(name,ts,item["original"])
-   body,status=get(url,MAX_BYTES)
-   entry={"capture_utc":ts,"source_ref_sha256":digest(url),
-     "provider_digest":str(item.get("digest",""))[:80],"state":status}
-   if body is not None:
-    try:entry["analysis"]=analyze_html(lib,body)
-    except Exception as e:entry["state"]="TOKEN_VAZIO_C_REJECTED_"+type(e).__name__
-   obj["mementos"].append(entry)
+   selected=[records[0]]
+   if len(records)>1 and records[-1]["timestamp"]!=records[0]["timestamp"]:
+    selected.append(records[-1])
+   for item in selected:
+    ts=item["timestamp"]
+    url=replay_url(name,ts,item["original"])
+    body,status=get(url,MAX_BYTES)
+    entry={"capture_utc":ts,"source_ref_sha256":digest(url),
+      "provider_digest":str(item.get("digest",""))[:80],"state":status,
+      "evidence_locator":"CURRENT_BOUNDED_CDX"}
+    if body is not None:
+     try:entry["analysis"]=analyze_html(lib,body)
+     except Exception as e:entry["state"]="TOKEN_VAZIO_C_REJECTED_"+type(e).__name__
+    obj["mementos"].append(entry)
   changes=[]
   ms=obj["mementos"]
   for i in range(1,len(ms)):
