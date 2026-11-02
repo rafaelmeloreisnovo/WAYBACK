@@ -1,6 +1,6 @@
 #include "../core/raf_evidence_v2.h"
-static int errors=0;
-static void ck(int x){if(!x)++errors;}
+#include <stdio.h> /* Hosted TEST ONLY; pure core does not depend on stdio. */
+#define ck(x) do { if (!(x)) { printf("V2_ASSERT_FAIL_LINE=%u\n", (unsigned)__LINE__); return 1; } } while(0)
 static int match(const unsigned char *p,struct raf_span s,const char *t) {
   unsigned int i=0U;
   while(t[i]) {if(s.begin+i>=s.end||p[s.begin+i]!=(unsigned char)t[i])return 0;++i;}
@@ -40,5 +40,5 @@ int main(void){
   ck(raf_html_next((const unsigned char *)"<meta content='unterminated",
       27U,&cur,&before)<0); /* invalid cursor (old >n) is fail closed */
   ck(before.kind==199U);
-  return errors?1:0;
+  return 0;
 }
