@@ -104,5 +104,49 @@ class CustodyTests(unittest.TestCase):
                     z.write(where/name,arcname=name)
             with self.assertRaises(ValueError): m.verify_previous(archive.getvalue(),"reis")
 
+
+    def test_foreign_fork_pr_merge_and_comments_with_cursor(self):
+        class FakeGate:
+            budget = 20
+            def __init__(self): self.requests=[]
+            def get(self,url,**kw):
+                self.requests.append(url)
+                if "/issues?" in url:
+                    v=[{"number":3,"pull_request":{},"state":"closed",
+                        "created_at":"2025-02-01T00:00:00Z",
+                        "closed_at":"2025-02-02T00:00:00Z","updated_at":"2025-02-02T00:00:00Z"}]
+                elif "/commits?" in url: v=[]
+                elif "/pulls/3?" in url:
+                    v={"id":103,"state":"closed","merged":True,
+                        "created_at":"2025-02-01T00:00:00Z",
+                        "merged_at":"2025-02-02T00:00:00Z","merge_commit_sha":"b"*40,
+                        "head":{"repo":{"full_name":"other-account/BLAKE3"},"sha":"a"*40,"ref":"feature"},
+                        "base":{"repo":{"full_name":"BLAKE3-team/BLAKE3"},"sha":"c"*40,"ref":"main"}}
+                elif "/comments?" in url:
+                    v=[{"id":19,"body":"BlackTrace test","created_at":"2025-02-01T00:00:00Z",
+                        "updated_at":"2025-02-02T00:00:00Z"}]
+                else: v=[]
+                data=json.dumps(v).encode()
+                return data,{"status":"HTTP_200","body_sha256":m.sha(data)}
+        st=m.state_for("blake")
+        g=FakeGate()
+        out=m.blake_cycle(st,g)
+        merged=[x for x in out if x.get("kind")=="pull"]
+        self.assertTrue(merged)
+        self.assertTrue(merged[0]["cross_repo"])
+        self.assertEqual(merged[0]["merge_commit_sha"],"b"*40)
+        comments=[x for x in out if x.get("kind")=="issue_comments"]
+        self.assertTrue(comments)
+        self.assertEqual(comments[0]["events"][0]["updated_at_utc"],"2025-02-02T00:00:00+00:00")
+        self.assertIn("blacktrace",comments[0]["events"][0]["matched_terms"])
+        self.assertTrue(st["repos"]["BLAKE3-team/BLAKE3"]["pending"])
+
+    def test_cross_scheme_cdx_is_rejected_when_origin_is_exact(self):
+        data=json.dumps([["timestamp","original","statuscode","digest"],
+          ["20080919000000","https://www.cesarreis.com.br/","200","D"]]).encode()
+        found, rejected=m.cdx_records(data,"cesar",requested_origin="http://www.cesarreis.com.br/")
+        self.assertEqual(found,[])
+        self.assertEqual(rejected,1)
+
 if __name__=="__main__":
     unittest.main()
