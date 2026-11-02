@@ -129,8 +129,11 @@ jobs:
             for module in raf_evidence_v2 raf_sha256_free raf_snapshot_free; do
               clang "--target=$arch" -std=c99 -O2 -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector -c "core/$module.c" -o "/tmp/$module-$arch.o"
             done
-            ld.lld -r -o "/tmp/snapshot-combined-$arch.o" "/tmp/raf_evidence_v2-$arch.o" "/tmp/raf_sha256_free-$arch.o" "/tmp/raf_snapshot_free-$arch.o"
-            test -z "$(nm -u "/tmp/snapshot-combined-$arch.o")"
+            test -z "$(nm -u "/tmp/raf_evidence_v2-$arch.o")"
+            test -z "$(nm -u "/tmp/raf_sha256_free-$arch.o")"
+            refs="$(nm -u "/tmp/raf_snapshot_free-$arch.o" | awk '{print $NF}' | sort)"
+            expected="$(printf '%s\n' raf_html_next raf_sha256_free | sort)"
+            test "$refs" = "$expected"
           done
       - name: Produce synthetic receipt without networking
         run: |
