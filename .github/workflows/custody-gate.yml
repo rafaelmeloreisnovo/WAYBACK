@@ -94,7 +94,8 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_wayback.py' -v
           python3 -m unittest discover -s tests -p 'test_cross_timeline.py' -v
           python3 -m unittest discover -s tests -p 'test_custody_cycle.py' -v
-          python3 -m py_compile host/observe.py host/cross_timeline.py host/custody_cycle.py
+          python3 -m unittest discover -s tests -p 'test_custody_join.py' -v
+          python3 -m py_compile host/observe.py host/cross_timeline.py host/custody_cycle.py host/custody_join.py
       - name: Host C test and three freestanding object compile gates
         run: |
           set -euo pipefail
@@ -423,5 +424,41 @@ jobs:
         with:
           name: wayback-custody-${{ matrix.lane }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: out/custody-*/
+          if-no-files-found: warn
+          retention-days: 90
+
+  custody-join:
+    name: Verify three custodial receipts and join their time axes
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_custody_cycle && inputs.human_public_fetch_authorization }}
+    needs: [custody-incremental]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout exact runner source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Offline evidence join falsifiers
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p test_custody_join.py -v
+      - name: Download three same-run artifacts and verify their SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python3 host/custody_join.py --run-id "$GITHUB_RUN_ID" --output "out/join-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          (cd "out/join-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" && sha256sum -c SHA256SUMS)
+      - name: Retain hashed cross-lane provenance and temporal candidates
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: wayback-custody-join-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/join-*/
           if-no-files-found: warn
           retention-days: 90
