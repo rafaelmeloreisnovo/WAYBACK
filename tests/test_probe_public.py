@@ -32,6 +32,10 @@ class TestPublicProbe(unittest.TestCase):
   r=m.read_cdx(x)
   self.assertEqual(r[0]["timestamp"],"20051215052151")
   self.assertNotIn("secret",json.dumps(r))
+ def test_empty_index_is_a_bounded_query_result(self):
+  self.assertEqual(m.read_cdx(b"[]"),[])
+  with self.assertRaisesRegex(ValueError,"INVALID_CDX_HEADER"):
+   m.read_cdx(b'{"error":"bad gateway"}')
  def test_bad_date(self):
   x=json.dumps([["timestamp","original","statuscode"],["BAD","http://www.cesarreis.com.br/","200"]])
   with self.assertRaisesRegex(ValueError,"TIMESTAMP"):m.read_cdx(x)
