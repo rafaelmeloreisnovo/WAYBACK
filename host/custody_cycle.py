@@ -147,9 +147,11 @@ def repo_state(asof):
 def blake_cycle(state, gate):
     asof = dt.datetime.now(UTC).isoformat()
     data = []
-    for repo in REPOS:
+    # Keep complete comment/review/timeline pagination cursors across CI cycles.
+    # Alternate repository order so a busy upstream cannot starve a fork.
+    repo_order = REPOS if state["cycle_index"] % 2 == 0 else tuple(reversed(REPOS))
+    for repo in repo_order:
         pos = state.setdefault("repos", {}).setdefault(repo, repo_state(asof))
-        # One page of issues, including PRs, and one page of commits per repo per cycle.
         if not pos["issues_exhausted"] and len(pos["pending"]) < 30:
             raw, status = gate.get(api(repo, "issues", state="all", sort="created",
                                         direction="asc", per_page=PAGE, page=pos["issues_page"]), auth=True)
@@ -162,7 +164,8 @@ def blake_cycle(state, gate):
                     for item in items:
                         n = item.get("number")
                         if isinstance(n, int):
-                            pos["pending"].append({"number": n, "is_pr": "pull_request" in item})
+                            pos["pending"].append({"number": n, "is_pr": "pull_request" in item,
+                                                   "detail_index": 0, "detail_page": 1})
                             data.append({"kind": "issue_or_pr", "repo": repo, "number": n,
                                 "is_pr": "pull_request" in item, "state": item.get("state"),
                                 "created_at": iso(item.get("created_at")),
@@ -204,63 +207,88 @@ def blake_cycle(state, gate):
                     pos["commits_exhausted"] = len(items) < PAGE
                 except Exception as err:
                     data[-1]["parse_error"] = type(err).__name__
-        # A PR is one GitHub issue; always preserve base/head crossing account boundaries.
-        if pos["pending"] and len(gate.requests) + 5 <= gate.budget:
-            pending = pos["pending"][0]
-            num = pending["number"]
-            tasks = [("issue_comments", "issues/%d/comments" % num),
+    for repo in repo_order:
+        pos = state["repos"][repo]
+        if not pos["pending"]:
+            continue
+        pending = pos["pending"][0]
+        num = pending["number"]
+        tasks = [("issue_comments", "issues/%d/comments" % num),
+                 ("timeline", "issues/%d/timeline" % num)]
+        if pending["is_pr"]:
+            tasks = [("pull", "pulls/%d" % num),
+                     ("issue_comments", "issues/%d/comments" % num),
+                     ("review_comments", "pulls/%d/comments" % num),
+                     ("reviews", "pulls/%d/reviews" % num),
+                     ("pull_commits", "pulls/%d/commits" % num),
                      ("timeline", "issues/%d/timeline" % num)]
-            if pending["is_pr"]:
-                tasks = [("pull", "pulls/%d" % num),
-                         ("issue_comments", "issues/%d/comments" % num),
-                         ("review_comments", "pulls/%d/comments" % num),
-                         ("reviews", "pulls/%d/reviews" % num),
-                         ("timeline", "issues/%d/timeline" % num)]
-            ok = True
-            for kind, suffix in tasks:
-                raw, status = gate.get(api(repo, suffix, per_page=PAGE, page=1), auth=True)
-                item = {"kind": kind, "repo": repo, "issue_number": num, "status": status}
-                if raw is None:
-                    ok = False
-                else:
-                    try:
-                        body = json_data(raw)
-                        if kind == "pull":
-                            item.update({"id": body.get("id"), "number": num,
-                                "state": body.get("state"), "draft": body.get("draft"),
-                                "merged": body.get("merged"), "merged_at": iso(body.get("merged_at")),
-                                "closed_at": iso(body.get("closed_at")),
-                                "merge_commit_sha": body.get("merge_commit_sha"),
-                                "head": {"repo": ((body.get("head") or {}).get("repo") or {}).get("full_name"),
-                                         "sha": (body.get("head") or {}).get("sha"),
-                                         "ref": (body.get("head") or {}).get("ref")},
-                                "base": {"repo": ((body.get("base") or {}).get("repo") or {}).get("full_name"),
-                                         "sha": (body.get("base") or {}).get("sha"),
-                                         "ref": (body.get("base") or {}).get("ref")},
-                                "merged_by": (body.get("merged_by") or {}).get("login"),
-                                "cross_repo": (((body.get("head") or {}).get("repo") or {}).get("full_name") !=
-                                               ((body.get("base") or {}).get("repo") or {}).get("full_name")),
-                                "source_payload_sha256": sha(raw)})
-                        elif isinstance(body, list):
-                            item["events"] = [compact_event(kind, repo, i, i.get("submitted_at") or
-                                               i.get("created_at")) for i in body]
-                            item["possibly_truncated"] = len(body) >= PAGE
-                            if kind == "timeline":
-                                item["events"] = [
-                                  {**compact_event("timeline:" + str(i.get("event")), repo, i),
-                                   "commit_id": i.get("commit_id"),
-                                   "referenced_repo": ((i.get("source") or {}).get("issue") or {}).get("repository_url")}
-                                  for i in body]
-                        else:
-                            raise ValueError("INVALID_DETAIL_SHAPE")
-                    except Exception as err:
-                        ok = False
-                        item["parse_error"] = type(err).__name__
+        # A bounded slice is processed per repo; partial histories remain resumable.
+        slots = 0
+        while (pending["detail_index"] < len(tasks) and
+               len(gate.requests) < gate.budget and slots < 4):
+            kind, suffix = tasks[pending["detail_index"]]
+            page = pending["detail_page"]
+            raw, status = gate.get(api(repo, suffix, per_page=PAGE, page=page), auth=True)
+            item = {"kind": kind, "repo": repo, "issue_number": num,
+                    "detail_page": page, "status": status}
+            if raw is None:
+                item["state"] = "TOKEN_VAZIO_DETAIL_NOT_FETCHED_RETRY"
                 data.append(item)
-            if ok:
-                pos["pending"].pop(0)
-            else:
-                data.append({"kind": "detail_retry_pending", "repo": repo, "number": num})
+                break
+            try:
+                body = json_data(raw)
+                if kind == "pull":
+                    if not isinstance(body, dict): raise ValueError("PULL_NOT_OBJECT")
+                    head = body.get("head") or {}
+                    base = body.get("base") or {}
+                    hrepo = (head.get("repo") or {}).get("full_name")
+                    brepo = (base.get("repo") or {}).get("full_name")
+                    item.update({"id": body.get("id"), "number": num,
+                        "state": body.get("state"), "draft": body.get("draft"),
+                        "merged": body.get("merged"), "merged_at": iso(body.get("merged_at")),
+                        "closed_at": iso(body.get("closed_at")),
+                        "created_at": iso(body.get("created_at")),
+                        "updated_at": iso(body.get("updated_at")),
+                        "merge_commit_sha": body.get("merge_commit_sha"),
+                        "head": {"repo": hrepo, "sha": head.get("sha"), "ref": head.get("ref")},
+                        "base": {"repo": brepo, "sha": base.get("sha"), "ref": base.get("ref")},
+                        "merged_by": (body.get("merged_by") or {}).get("login"),
+                        "cross_repo": hrepo != brepo if hrepo and brepo else None,
+                        "source_payload_sha256": sha(raw)})
+                    pending["detail_index"] += 1
+                    pending["detail_page"] = 1
+                elif isinstance(body, list):
+                    if kind == "pull_commits":
+                        item["events"] = [{"kind": "pull_commit", "sha": c.get("sha"),
+                            "parents": [p.get("sha") for p in c.get("parents", [])],
+                            "author_at": iso(((c.get("commit") or {}).get("author") or {}).get("date")),
+                            "committer_at": iso(((c.get("commit") or {}).get("committer") or {}).get("date"))}
+                            for c in body]
+                    else:
+                        item["events"] = [compact_event(kind, repo, c,
+                            c.get("submitted_at") or c.get("created_at")) for c in body]
+                        if kind == "timeline":
+                            item["events"] = [
+                                {**compact_event("timeline:" + str(c.get("event")), repo, c),
+                                 "commit_id": c.get("commit_id"),
+                                 "referenced_repo": ((c.get("source") or {}).get("issue") or {}).get("repository_url")}
+                                for c in body]
+                    item["possibly_truncated"] = len(body) >= PAGE
+                    if len(body) >= PAGE:
+                        pending["detail_page"] += 1
+                    else:
+                        pending["detail_index"] += 1
+                        pending["detail_page"] = 1
+                else:
+                    raise ValueError("INVALID_DETAIL_SHAPE")
+            except Exception as err:
+                item["parse_error"] = type(err).__name__
+                data.append(item)
+                break
+            data.append(item)
+            slots += 1
+        if pending["detail_index"] == len(tasks):
+            pos["pending"].pop(0)
     return data
 
 class HTMLSignals(HTMLParser):
