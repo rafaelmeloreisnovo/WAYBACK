@@ -29,6 +29,7 @@ int raf_html_next(const unsigned char *src, unsigned int n,
 struct raf_time_match {
   unsigned long long gap_seconds;
   unsigned int within_window, same_clock_minute, month_apart_clock_match;
+  unsigned int month_distance, same_calendar_day, exact_one_month;
 };
 /* UTC timestamps exactly YYYYMMDDhhmmss; 1970..2099. No offset parsing.
  * 0 on success; -1 on bad calendar/inputs without writing output.
