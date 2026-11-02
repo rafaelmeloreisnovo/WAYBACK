@@ -36,6 +36,10 @@ int main(void){
   ck(raf_stamp_compare((const unsigned char *)"20030721165004",
       (const unsigned char *)"20051221165008",60U,&tm)==0);
   ck(tm.month_apart_clock_match==1U&&tm.within_window==0U&&tm.same_clock_minute==1U);
+  ck(tm.month_distance==29U&&tm.same_calendar_day==1U&&tm.exact_one_month==0U);
+  ck(raf_stamp_compare((const unsigned char *)"20261001065614",
+      (const unsigned char *)"20261101065600",60U,&tm)==0);
+  ck(tm.month_distance==1U&&tm.same_calendar_day==1U&&tm.exact_one_month==1U);
   ck(raf_stamp_compare((const unsigned char *)"20261101060000",
       (const unsigned char *)"20261101060058",60U,&tm)==0);
   ck(tm.within_window==1U);
