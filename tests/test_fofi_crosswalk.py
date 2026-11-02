@@ -66,4 +66,21 @@ class FofiTests(unittest.TestCase):
   result=m.temporal_crosswalk(web,git)
   self.assertEqual(result["observed_pairs"],1)
   self.assertEqual(result["candidates"][0]["classification"],"SAME_CALENDAR_DAY_NOT_CAUSAL_EVIDENCE")
+ def test_pr_issue_shadow_not_two_entities(self):
+  o={repo:{"records":{"commits":[],"issues":[],"pulls":[],"comments":[],
+        "issues/comments":[],"pulls/comments":[]}} for repo in m.REPOS}
+  item={"type":"PR","number":185}
+  o[m.REPOS[1]]["records"]["issues"].append(item)
+  o[m.REPOS[1]]["records"]["pulls"].append(item)
+  stats=m.git_uniqueness(o)
+  self.assertEqual(stats["provider_rows"],2)
+  self.assertEqual(stats["unique_scoped_ids"],1)
+  self.assertEqual(stats["duplicate_pr_issue_shadows_or_ids"],1)
+ def test_pinned_anchors_have_exact_prior_provenance(self):
+  self.assertEqual(m.PINNED["cesar_prodfto"][1][0],"20080220071408")
+  self.assertEqual(m.PINNED["reis_root"][0][0],"20080501153240")
+  for name,anchors in m.PINNED.items():
+   for ts,original in anchors:
+    self.assertTrue(m.origin_allowed(original,name))
+    self.assertTrue(m.permitted(m.replay_url(name,ts,original)))
 if __name__=="__main__":unittest.main()
