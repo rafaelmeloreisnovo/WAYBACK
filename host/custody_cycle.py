@@ -19,7 +19,8 @@ import zipfile
 
 UTC = dt.timezone.utc
 REPOS = ("BLAKE3-team/BLAKE3", "rafaelmeloreisnovo/BLAKE3")
-SITES = {"cesar": "cesarreis.com.br", "reis": "reisoffice.com.br"}
+SITES = {"cesar": ("cesarreis.com.br",),
+         "reis": ("reisoffice.com.br", "reisoffice.com")}
 PAGE = 10
 MAX_HTTP = 524288
 MAX_ZIP = 2 * 1024 * 1024
@@ -49,9 +50,11 @@ def sanitized_url(url):
             "query_sha256": sha(p.query) if p.query else None}
 
 def origins(lane):
-    domain = SITES[lane]
+    # Domains remain distinct sources; matching contents never implies common ownership.
+    domains = SITES[lane]
     return tuple(s + "://" + pre + domain + "/"
-                 for pre in ("", "www.") for s in ("http", "https"))
+                 for domain in domains for pre in ("", "www.")
+                 for s in ("http", "https"))
 
 def source_allowed(url, lane):
     try:
