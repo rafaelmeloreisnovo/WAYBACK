@@ -95,6 +95,29 @@ jobs:
           printf '%s\n' 'v2=tag-boundary/html-attrs/UTC-correlation; archive-WARC=TOKEN_VAZIO_NOT_EXECUTED' \
             > out/objects/V2_SCOPE.txt
 
+
+      - name: SHA-256 freestanding KAT and three-ABI undefined-symbol gate
+        run: |
+          set -euo pipefail
+          cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic \
+            core/raf_sha256_free.c tests/test_sha256_free.c -o /tmp/raf-sha256-v2
+          /tmp/raf-sha256-v2
+          clang -std=c99 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            core/raf_sha256_free.c tests/test_sha256_free.c -o /tmp/raf-sha256-san
+          /tmp/raf-sha256-san
+          mkdir -p out/objects
+          for arch in x86_64-unknown-none armv7-none-eabi aarch64-none-elf; do
+            clang "--target=$arch" -std=c99 -O2 -Wall -Wextra -Werror \
+              -ffreestanding -fno-builtin -fno-stack-protector \
+              -c core/raf_sha256_free.c -o "out/objects/sha256-$arch.o"
+            test -z "$(nm -u "out/objects/sha256-$arch.o")"
+            readelf -h "out/objects/sha256-$arch.o" > "out/objects/sha256-$arch.elf.txt"
+            sha256sum "out/objects/sha256-$arch.o" > "out/objects/sha256-$arch.SHA256SUMS"
+          done
+          printf '%s\n' 'sha256=fips180-4 KAT, not release-signature or BLAKE3' \
+            > out/objects/SHA256_SCOPE.txt
+
       - name: Produce synthetic receipt without networking
         run: |
           set -euo pipefail
