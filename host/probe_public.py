@@ -18,6 +18,7 @@ import urllib.request
 MAX_RESPONSE=262144
 CAP=24
 CDX_HOSTS=("www.cesarreis.com.br","www.reisoffice.com.br")
+TIME_WINDOWS=(("1996","2005"),("2006","2018"),("2019","2026"))
 GIT_REPOS=("BLAKE3-team/BLAKE3","rafaelmeloreisnovo/BLAKE3")
 MAX_FLAGS=20
 
@@ -50,11 +51,11 @@ def fetch_public(url):
     except Exception as exc:
         return None,"TOKEN_VAZIO_FETCH_"+type(exc).__name__
 
-def cdx_url(host):
+def cdx_url(host,year_from="1996",year_to="2026"):
     if host not in CDX_HOSTS:raise ValueError("HOST_NOT_ALLOWLISTED")
     query=urllib.parse.urlencode({"url":host+"/*","output":"json",
       "fl":"timestamp,original,statuscode,mimetype,digest,length",
-      "from":"1996","to":"2026","filter":"statuscode:200","limit":str(CAP)})
+      "from":year_from,"to":year_to,"filter":"statuscode:200","limit":str(CAP)})
     return "https://web.archive.org/cdx/search/cdx?"+query
 
 def git_url(repo):
@@ -150,11 +151,18 @@ def main():
     fn=load_core(args.core_so)
     archive={};commits={};status={}
     for host in CDX_HOSTS:
-        data,state=fetch_public(cdx_url(host))
-        status["WAYBACK_"+host]=state
-        if data is None:archive[host]=[];continue
-        try:archive[host]=read_cdx(data)
-        except Exception as exc:status["WAYBACK_"+host]="TOKEN_VAZIO_INVALID_"+type(exc).__name__;archive[host]=[]
+        archive[host]=[]
+        for year_from,year_to in TIME_WINDOWS:
+            key="WAYBACK_"+host+"_"+year_from+"_"+year_to
+            data,state=fetch_public(cdx_url(host,year_from,year_to))
+            status[key]=state
+            if data is None:continue
+            try:
+                batch=read_cdx(data)
+                for item in batch:item["window"]=year_from+"_"+year_to
+                archive[host].extend(batch)
+            except Exception as exc:
+                status[key]="TOKEN_VAZIO_INVALID_"+type(exc).__name__
     for repo in GIT_REPOS:
         data,state=fetch_public(git_url(repo))
         status["GITHUB_"+repo]=state
@@ -162,12 +170,12 @@ def main():
         try:commits[repo]=read_git(data)
         except Exception as exc:status["GITHUB_"+repo]="TOKEN_VAZIO_INVALID_"+type(exc).__name__;commits[repo]=[]
     matches,truncated=compare(archive,commits,fn)
-    receipt={"schema":"rafaelia.wayback.public_probe.v2",
+    receipt={"schema":"rafaelia.wayback.public_probe.v3",
       "observed_at_utc":dt.datetime.now(dt.timezone.utc).isoformat(),
       "kind":"BOUNDED_PUBLIC_METADATA_NOT_ARCHIVE_BODY",
       "source_statuses":status,"archive_metadata":archive,"git_metadata":commits,
       "clock_candidates":matches,"clock_candidates_truncated":truncated,
-      "scope":"2 hosts CDX x 24 records and 2 public git repos x 24 commits; NOT complete archive or git history",
+      "scope":"2 sites x 3 time windows (1996-2005,2006-2018,2019-2026) x at most 24 CDX records/window; 2 git repos x 24 commits, sample only; NOT exhaustive",
       "no_raw_html":True,"no_photos":True,"no_form_submission":True,
       "human_actor":"TOKEN_VAZIO_NOT_ATTESTED","claim_allowed":False}
     out=Path(args.output_dir)
