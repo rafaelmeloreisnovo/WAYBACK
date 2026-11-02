@@ -118,6 +118,20 @@ jobs:
           printf '%s\n' 'sha256=fips180-4 KAT, not release-signature or BLAKE3' \
             > out/objects/SHA256_SCOPE.txt
 
+      - name: Freestanding snapshot SHA256 and HTML keywords C test
+        run: |
+          set -euo pipefail
+          cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic core/raf_evidence_v2.c core/raf_sha256_free.c core/raf_snapshot_free.c tests/test_snapshot_free.c -o /tmp/snapshot-raf
+          /tmp/snapshot-raf
+          clang -std=c99 -O1 -g -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined core/raf_evidence_v2.c core/raf_sha256_free.c core/raf_snapshot_free.c tests/test_snapshot_free.c -o /tmp/snapshot-san
+          /tmp/snapshot-san
+          for arch in x86_64-unknown-none armv7-none-eabi aarch64-none-elf; do
+            for module in raf_evidence_v2 raf_sha256_free raf_snapshot_free; do
+              clang "--target=$arch" -std=c99 -O2 -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector -c "core/$module.c" -o "/tmp/$module-$arch.o"
+            done
+            ld.lld -r -o "/tmp/snapshot-combined-$arch.o" "/tmp/raf_evidence_v2-$arch.o" "/tmp/raf_sha256_free-$arch.o" "/tmp/raf_snapshot_free-$arch.o"
+            test -z "$(nm -u "/tmp/snapshot-combined-$arch.o")"
+          done
       - name: Produce synthetic receipt without networking
         run: |
           set -euo pipefail
