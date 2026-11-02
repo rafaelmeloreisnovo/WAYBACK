@@ -1,0 +1,297 @@
+name: WAYBACK / RMR-boundary evidence gate
+on:
+  pull_request:
+    paths:
+      - "core/**"
+      - "host/**"
+      - "tests/**"
+      - "001_PONTEIRO/**"
+      - "governance/**"
+      - ".github/workflows/custody-gate.yml"
+  workflow_dispatch:
+    inputs:
+      run_live:
+        description: "Explicitly allow ONE public, read-only retrieval. No cron/crawl/forms."
+        type: boolean
+        default: false
+        required: true
+      target:
+        description: "Allowlisted URL only"
+        type: choice
+        options: [reisoffice, cesarreis, geocities, cesarreis_2005]
+        default: geocities
+        required: true
+      human_public_fetch_authorization:
+        description: "I approve one public GET, within read-only/privacy limits"
+        type: boolean
+        default: false
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wayback-evidence-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  synthetic-gates:
+    name: Freestanding source + negative fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 9
+    steps:
+      - name: Checkout exact source with no persisted token
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert source HEAD before testing
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+      - name: Hosted adapter adversarial tests (network-free)
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_wayback.py' -v
+          python3 -m py_compile host/observe.py
+      - name: Host C test and three freestanding object compile gates
+        run: |
+          set -euo pipefail
+          cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic core/raf_html_indicators.c tests/test_core.c -o /tmp/raf-html-gate
+          /tmp/raf-html-gate
+          mkdir -p out/objects
+          for arch in x86_64-unknown-none armv7-none-eabi aarch64-none-elf; do
+            clang "--target=$arch" -std=c99 -O2 -Wall -Wextra -Werror \
+              -ffreestanding -fno-builtin -fno-stack-protector \
+              -c core/raf_html_indicators.c -o "out/objects/$arch.o"
+            test -z "$(nm -u "out/objects/$arch.o")"
+            readelf -h "out/objects/$arch.o" > "out/objects/$arch.elf.txt"
+            sha256sum "out/objects/$arch.o" > "out/objects/$arch.SHA256SUMS"
+          done
+          printf '%s\n' 'IMPLEMENTATION=freestanding object, not physical-device execution' > out/objects/SCOPE.txt
+
+      - name: V2 C freestanding HTML event + UTC correlation tests
+        run: |
+          set -euo pipefail
+          cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic \
+            core/raf_evidence_v2.c tests/test_evidence_v2.c -o /tmp/raf-evidence-v2
+          /tmp/raf-evidence-v2
+          # Host sanitizers are a distinct proof from embedded/freestanding object compilation.
+          clang -std=c99 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            core/raf_evidence_v2.c tests/test_evidence_v2.c -o /tmp/raf-evidence-asan
+          /tmp/raf-evidence-asan
+          mkdir -p out/objects
+          for arch in x86_64-unknown-none armv7-none-eabi aarch64-none-elf; do
+            clang "--target=$arch" -std=c99 -O2 -Wall -Wextra -Werror \
+              -ffreestanding -fno-builtin -fno-stack-protector \
+              -c core/raf_evidence_v2.c -o "out/objects/v2-$arch.o"
+            test -z "$(nm -u "out/objects/v2-$arch.o")"
+            readelf -h "out/objects/v2-$arch.o" > "out/objects/v2-$arch.elf.txt"
+            sha256sum "out/objects/v2-$arch.o" > "out/objects/v2-$arch.SHA256SUMS"
+          done
+          printf '%s\n' 'v2=tag-boundary/html-attrs/UTC-correlation; archive-WARC=TOKEN_VAZIO_NOT_EXECUTED' \
+            > out/objects/V2_SCOPE.txt
+
+
+      - name: SHA-256 freestanding KAT and three-ABI undefined-symbol gate
+        run: |
+          set -euo pipefail
+          cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic \
+            core/raf_sha256_free.c tests/test_sha256_free.c -o /tmp/raf-sha256-v2
+          /tmp/raf-sha256-v2
+          clang -std=c99 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            core/raf_sha256_free.c tests/test_sha256_free.c -o /tmp/raf-sha256-san
+          /tmp/raf-sha256-san
+          mkdir -p out/objects
+          for arch in x86_64-unknown-none armv7-none-eabi aarch64-none-elf; do
+            clang "--target=$arch" -std=c99 -O2 -Wall -Wextra -Werror \
+              -ffreestanding -fno-builtin -fno-stack-protector \
+              -c core/raf_sha256_free.c -o "out/objects/sha256-$arch.o"
+            test -z "$(nm -u "out/objects/sha256-$arch.o")"
+            readelf -h "out/objects/sha256-$arch.o" > "out/objects/sha256-$arch.elf.txt"
+            sha256sum "out/objects/sha256-$arch.o" > "out/objects/sha256-$arch.SHA256SUMS"
+          done
+          printf '%s\n' 'sha256=fips180-4 KAT, not release-signature or BLAKE3' \
+            > out/objects/SHA256_SCOPE.txt
+
+      - name: Freestanding snapshot SHA256 and HTML keywords C test
+        run: |
+          set -euo pipefail
+          cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic core/raf_evidence_v2.c core/raf_sha256_free.c core/raf_snapshot_free.c tests/test_snapshot_free.c -o /tmp/snapshot-raf
+          /tmp/snapshot-raf
+          clang -std=c99 -O1 -g -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined core/raf_evidence_v2.c core/raf_sha256_free.c core/raf_snapshot_free.c tests/test_snapshot_free.c -o /tmp/snapshot-san
+          /tmp/snapshot-san
+          for arch in x86_64-unknown-none armv7-none-eabi aarch64-none-elf; do
+            for module in raf_evidence_v2 raf_sha256_free raf_snapshot_free; do
+              clang "--target=$arch" -std=c99 -O2 -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector -c "core/$module.c" -o "/tmp/$module-$arch.o"
+            done
+            test -z "$(nm -u "/tmp/raf_evidence_v2-$arch.o")"
+            test -z "$(nm -u "/tmp/raf_sha256_free-$arch.o")"
+            refs="$(nm -u "/tmp/raf_snapshot_free-$arch.o" | awk '{print $NF}' | sort)"
+            expected="$(printf '%s\n' raf_html_next raf_sha256_free | sort)"
+            test "$refs" = "$expected"
+          done
+      - name: Produce synthetic receipt without networking
+        run: |
+          set -euo pipefail
+          python3 host/observe.py --mode synthetic --output out/synthetic
+          ( cd out/synthetic && sha256sum -c SHA256SUMS )
+      - name: Publish test-only artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: wayback-synthetic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 90
+
+
+  public-provider-metadata:
+    name: Historical public CDX/Git metadata (bounded; evidence-gated)
+    if: ${{ github.event_name == 'pull_request' }}
+    needs: synthetic-gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact PR source with no persistent token
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Assert exact source and hosted-adapter negative tests
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          python3 -m unittest discover -s tests -p 'test_probe_public.py' -v
+          python3 -m py_compile host/probe_public.py
+      - name: Build C99 freestanding correlation code for host bridge
+        run: |
+          set -euo pipefail
+          cc -std=c99 -O2 -Wall -Wextra -Werror -fPIC -shared \
+            -ffreestanding -fno-builtin -fno-stack-protector \
+            core/raf_evidence_v2.c -o /tmp/libraf-timeline-v2.so
+      - name: Probe allowlisted public CDX and GitHub metadata once
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python3 host/probe_public.py --core-so /tmp/libraf-timeline-v2.so --output-dir out/provider
+          ( cd out/provider && sha256sum -c SHA256SUMS )
+      - name: Historical source gate (unavailable archive is BLOCKED, not zero)
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('out/provider/receipt.json').read_text())
+          if not any(r['archive_metadata'].values()):
+              print('BLOCKED_ARCHIVE_CAPTURE_METADATA_NOT_RETRIEVED')
+              raise SystemExit(2)
+          print('HISTORICAL_CDX_METADATA_OBSERVED_NOT_WARC_VERIFIED')
+          PY
+      - name: Preserve public-metadata-only receipt, including blocked states
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: wayback-public-metadata-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/provider/
+          if-no-files-found: warn
+          retention-days: 90
+
+
+  memento-html-snapshots:
+    name: Historical rendered HTML replay and pure-C structural diff
+    if: ${{ github.event_name == 'pull_request' }}
+    needs: synthetic-gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact PR revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Confirm HEAD and exercise read-only archive adapter
+        env:
+          EXACT_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXACT_SHA"
+          python3 -m unittest discover -s tests -p 'test_replay_public.py' -v
+          python3 -m py_compile host/replay_public.py
+      - name: Build local C freestanding snapshot as hosted bridge
+        run: |
+          set -euo pipefail
+          cc -std=c99 -O2 -Wall -Wextra -Werror -fPIC -shared \
+            -ffreestanding -fno-builtin -fno-stack-protector \
+            core/raf_evidence_v2.c core/raf_sha256_free.c core/raf_snapshot_free.c \
+            -o /tmp/libraf-snapshot.so
+      - name: Read bounded public historical HTML replay without saving content
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python3 host/replay_public.py --core-so /tmp/libraf-snapshot.so --output out/replay
+          ( cd out/replay && sha256sum -c SHA256SUMS )
+      - name: Terminal archive-byte evidence gate
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('out/replay/receipt.json').read_text())
+          count=sum(sum('snapshot' in m for m in rec['mementos'])
+                    for rec in r['targets'].values())
+          print('OBSERVED_REPLAY_HTML_COUNT='+str(count))
+          if count==0:
+              print('BLOCKED_WAYBACK_HTML_NO_SOURCE_BYTES')
+              raise SystemExit(2)
+          print('PASS_SCOPED_WAYBACK_REPLAY_NOT_ORIGINAL_WARC')
+          PY
+      - name: Append-only evidence artifact (hashes and counts only)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: wayback-replay-source-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/replay/
+          if-no-files-found: warn
+          retention-days: 90
+
+  manually-authorized-public-get:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_live && inputs.human_public_fetch_authorization }}
+    needs: synthetic-gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: One allowlisted GET; never follow redirects or submit forms
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          case "$TARGET" in
+            reisoffice|cesarreis|geocities|cesarreis_2005) ;;
+            *) echo 'BLOCKED_INVALID_TARGET'; exit 1 ;;
+          esac
+          mkdir -p out
+          python3 host/observe.py --mode live --target "$TARGET" \
+            --manual-public-fetch-authorization --output out/public-get
+      - name: Upload verification receipt (never raw page data)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: wayback-manual-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/public-get/
+          if-no-files-found: warn
+          retention-days: 90
