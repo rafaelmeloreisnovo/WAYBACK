@@ -13,8 +13,8 @@ spec.loader.exec_module(m)
 class CrossTimelineTests(unittest.TestCase):
     def test_eight_variants_exact(self):
         v = m.variants()
-        self.assertEqual(len(v), 8)
-        self.assertEqual(len(set(v)), 8)
+        self.assertEqual(len(v), 12)
+        self.assertEqual(len(set(v)), 12)
         for d in m.DOMAINS:
             self.assertEqual(sum(d in x for x in v), 4)
         self.assertIn("http://cesarreis.com.br/", v)
