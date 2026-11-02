@@ -11,14 +11,16 @@ m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 
 class CrossTimelineTests(unittest.TestCase):
-    def test_eight_variants_exact(self):
+    def test_twelve_variants_exact(self):
         v = m.variants()
-        self.assertEqual(len(v), 8)
-        self.assertEqual(len(set(v)), 8)
+        self.assertEqual(len(v), 12)
+        self.assertEqual(len(set(v)), 12)
         for d in m.DOMAINS:
-            self.assertEqual(sum(d in x for x in v), 4)
+            self.assertEqual(sum(x.endswith('://' + d + '/') or x.endswith('://www.' + d + '/') for x in v), 4)
         self.assertIn("http://cesarreis.com.br/", v)
         self.assertIn("https://www.reisoffice.com.br/", v)
+        self.assertIn("http://reisoffice.com/", v)
+        self.assertIn("https://www.reisoffice.com/", v)
 
     def test_https_archive_transport_and_no_open_redirect(self):
         self.assertTrue(m.approved(m.cdx_url(m.variants()[0])))
@@ -40,6 +42,16 @@ class CrossTimelineTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(mismatch, 2)
         self.assertEqual(rows[0]["provider_digest"], "A")
+
+    def test_reis_domains_never_merge_by_suffix(self):
+        archive_origin = "https://reisoffice.com/"
+        distinct_origin = "https://reisoffice.com.br/"
+        payload = json.dumps([["timestamp","original","statuscode","mimetype","digest","length"],
+            ["20080501153240",archive_origin,"200","text/html","SAME","10"],
+            ["20080501153240",distinct_origin,"200","text/html","SAME","10"]]).encode()
+        observed, rejected = m.cdx_rows(payload, archive_origin)
+        self.assertEqual((len(observed), rejected), (1, 1))
+        self.assertEqual(observed[0]["original"], archive_origin)
 
     def test_missing_is_not_zero(self):
         self.assertEqual(m.cdx_rows(b"[]", m.variants()[0]), ([],0))

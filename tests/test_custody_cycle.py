@@ -15,9 +15,10 @@ spec.loader.exec_module(m)
 
 class CustodyTests(unittest.TestCase):
     def test_origin_matrix(self):
-        for lane in ("cesar", "reis"):
-            self.assertEqual(len(m.origins(lane)), 4)
-            self.assertEqual(len(set(m.origins(lane))), 4)
+        for lane, count in (("cesar",4), ("reis",8)):
+            self.assertEqual(len(m.origins(lane)), count)
+            self.assertEqual(len(set(m.origins(lane))), count)
+        self.assertIn("https://reisoffice.com/", m.origins("reis"))
 
     def test_original_url_validation(self):
         self.assertTrue(m.source_allowed("https://www.cesarreis.com.br/telas/prodfto.asp", "cesar"))
@@ -33,6 +34,16 @@ class CustodyTests(unittest.TestCase):
         found, bad = m.cdx_records(payload,"cesar")
         self.assertEqual((len(found),bad),(1,1))
         self.assertTrue(found[0]["source_url"].endswith("prodfto.asp"))
+
+    def test_reis_hosts_remain_independent_cdx_sources(self):
+        com = "http://reisoffice.com/"
+        br = "http://reisoffice.com.br/"
+        payload = json.dumps([["timestamp","original","statuscode","mimetype","digest","length"],
+            ["20080501153240",com,"200","text/html","MATCH","12"],
+            ["20080501153240",br,"200","text/html","MATCH","12"]]).encode()
+        found, rejected = m.cdx_records(payload, "reis", requested_origin=com)
+        self.assertEqual((len(found), rejected), (1, 1))
+        self.assertNotEqual(m.sha(com), m.sha(br))
 
     def test_query_value_is_not_persisted(self):
         payload = json.dumps([["timestamp","original","statuscode","digest"],
