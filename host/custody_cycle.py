@@ -128,6 +128,10 @@ def mentions(text):
 def compact_event(kind, source, item, event_time=None):
     return {"kind": kind, "source": source, "ref": item.get("id", item.get("sha")),
             "html_url": item.get("html_url"), "at_utc": iso(event_time or item.get("created_at")),
+            "updated_at_utc": iso(item.get("updated_at")),
+            "state": item.get("state"), "commit_id": item.get("commit_id"),
+            "in_reply_to_id": item.get("in_reply_to_id"),
+            "path_sha256": sha(item["path"]) if isinstance(item.get("path"), str) else None,
             "actor": (item.get("user") or {}).get("login"),
             "body_sha256": sha(item["body"]) if isinstance(item.get("body"), str) else None,
             "matched_terms": mentions(item.get("body")),
@@ -319,7 +323,7 @@ class HTMLSignals(HTMLParser):
     def handle_data(self, data):
         self.mark("page_text", data)
 
-def cdx_records(raw, lane):
+def cdx_records(raw, lane, requested_origin=None):
     block = json_data(raw)
     if not isinstance(block, list) or not block:
         return [], 0
@@ -335,7 +339,11 @@ def cdx_records(raw, lane):
         rec = dict(zip(cols, line))
         url = rec["original"]
         stamp = str(rec["timestamp"])
-        if not source_allowed(url, lane) or not re.fullmatch("[0-9]{14}", stamp):
+        if (not source_allowed(url, lane) or
+            (requested_origin is not None and
+             (urllib.parse.urlsplit(url).scheme + "://" +
+              (urllib.parse.urlsplit(url).hostname or "") + "/") != requested_origin) or
+            not re.fullmatch("[0-9]{14}", stamp)):
             rejected += 1
             continue
         accepted.append({"timestamp": stamp, **sanitized_url(url),
@@ -343,6 +351,13 @@ def cdx_records(raw, lane):
             "provider_digest": rec.get("digest"), "status": rec.get("statuscode"),
             "mimetype": rec.get("mimetype"), "length": rec.get("length")})
     return accepted, rejected
+
+def discovery_query(origin):
+    q = {"url": origin, "matchType": "prefix",
+         "from": "1994", "to": "2026", "output": "json",
+         "fl": "timestamp,original,statuscode,mimetype,digest,length",
+         "limit": "1"}
+    return "https://web.archive.org/cdx/search/cdx?" + urllib.parse.urlencode(q)
 
 def advance_month(cursor):
     cursor["month"] += 1
@@ -354,7 +369,7 @@ def advance_month(cursor):
 def site_cycle(lane, state, gate):
     records = []
     pointers = state.setdefault("origins", {
-        x: {"year": 1994, "month": 1, "offset": 0, "seen_page_sha256": None}
+        x: {"year": 1994, "month": 1, "offset": 0, "seen_page_sha256": None, "discovered": False}
         for x in origins(lane)})
     candidates = []
     for origin in origins(lane):
@@ -362,19 +377,30 @@ def site_cycle(lane, state, gate):
         if pos["year"] > 2026:
             records.append({"kind": "origin_coverage", "origin": origin, "state": "REACHED_END_2026"})
             continue
-        query = archive_query(origin, pos["year"], pos["month"], pos["offset"])
+        discovering = not pos.get("discovered", False)
+        query = discovery_query(origin) if discovering else archive_query(
+            origin, pos["year"], pos["month"], pos["offset"])
         raw, status = gate.get(query, lane)
-        row = {"kind": "cdx_page", "origin": origin,
-               "year": pos["year"], "month": pos["month"], "offset": pos["offset"],
-               "status": status}
+        row = {"kind": "cdx_discovery" if discovering else "cdx_page",
+               "origin": origin, "year": pos["year"], "month": pos["month"],
+               "offset": pos["offset"], "status": status}
         if raw is not None:
             try:
-                found, rejected = cdx_records(raw, lane)
+                found, rejected = cdx_records(raw, lane, requested_origin=origin)
                 row["records"] = [{k: v for k, v in r.items() if k != "source_url"} for r in found]
                 row["rejected_origin_rows"] = rejected
-                row["sampling_limit"] = PAGE
-                row["possibly_truncated"] = len(found) == PAGE
-                if status["body_sha256"] == pos["seen_page_sha256"] and pos["offset"] > 0:
+                row["sampling_limit"] = 1 if discovering else PAGE
+                row["possibly_truncated"] = len(found) >= (1 if discovering else PAGE)
+                if discovering:
+                    if found:
+                        earliest = sorted(found, key=lambda x: x["timestamp"])[0]["timestamp"]
+                        pos["year"], pos["month"] = int(earliest[:4]), int(earliest[4:6])
+                        pos["discovered"] = True
+                        pos["offset"] = 0
+                        row["first_indexed_capture"] = earliest
+                    else:
+                        row["state"] = "TOKEN_VAZIO_NO_EXACT_VARIANT_DISCOVERED_RETRY"
+                elif status["body_sha256"] == pos["seen_page_sha256"] and pos["offset"] > 0:
                     row["state"] = "BLOCKED_REPEATED_PAGE_OFFSET_UNVERIFIED"
                 else:
                     pos["seen_page_sha256"] = status["body_sha256"]
@@ -403,6 +429,22 @@ def site_cycle(lane, state, gate):
                 meta["html_counts"] = scanner.counts
                 meta["raw_replay_sha256"] = sha(raw)
                 meta["no_raw_html_published"] = True
+                history = state.setdefault("observed_hash_index", {})
+                key = candidate["url_sha256"]
+                old = history.get(key)
+                if old is not None:
+                    meta["comparison_to_prior_observation"] = {
+                        "prior_sha256": old["raw_replay_sha256"],
+                        "current_sha256": meta["raw_replay_sha256"],
+                        "changed": old["raw_replay_sha256"] != meta["raw_replay_sha256"],
+                        "prior_capture": old["timestamp"],
+                        "current_capture": candidate["timestamp"],
+                        "scope": "REPLAY_BYTES_NOT_ORIGINAL_WARC"}
+                if key in history or len(history) < 1000:
+                    history[key] = {"raw_replay_sha256": meta["raw_replay_sha256"],
+                                    "timestamp": candidate["timestamp"]}
+                else:
+                    meta["history_state"] = "BLOCKED_HISTORY_INDEX_CAP"
             except Exception as err:
                 meta["parse_state"] = "TOKEN_VAZIO_HTML_" + type(err).__name__
         records.append(meta)
