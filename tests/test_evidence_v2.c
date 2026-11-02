@@ -20,7 +20,14 @@ int main(void){
   struct raf_html_event e,before;
   struct raf_time_match tm;
   while((r=raf_html_next(html,(unsigned int)(sizeof(html)-1U),&cur,&e))==1) {
-    if(e.kind==RAF_EV_LINK){++links;ck((e.flags&RAF_F_ASP)!=0U);ck(match(html,e.value,"/telas/prodfto.asp?Grupo=A"));}
+    if(e.kind==RAF_EV_LINK){
+      ++links;
+      printf("V2_LINK flags=%u len=%u value=%.*s\n", e.flags,
+        e.value.end-e.value.begin, (int)(e.value.end-e.value.begin),
+        (const char *)(html+e.value.begin));
+      ck((e.flags&RAF_F_ASP)!=0U);
+      ck(match(html,e.value,"/telas/prodfto.asp?Grupo=A"));
+    }
     if(e.kind==RAF_EV_META&&(e.flags&RAF_F_KEYWORDS)){++kw;ck(match(html,e.value,"Canon, fotograFIA, impressora"));}
     if(e.kind==RAF_EV_COMMENT)++comments;
     if(e.kind==RAF_EV_IMAGE)++images;
