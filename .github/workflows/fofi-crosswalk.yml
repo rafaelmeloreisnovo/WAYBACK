@@ -102,8 +102,12 @@ jobs:
           g=sum(len(x) for v in r["github"].values() for x in v["records"].values())
           print("OBSERVED_ARCHIVE_HTML",a,"OBSERVED_GITHUB_PUBLIC_EVENTS",g)
           assert r["claim_allowed"] is False
-          if a==0 or g==0:
-              print("BLOCKED_SOURCE_NOT_ZERO")
+          gate=r["evidence_gate"]
+          print("SOURCE_COVERAGE_GATE",gate["state"],
+                "MISSING_ARCHIVE",gate["missing_archive_targets"],
+                "MISSING_GIT",gate["missing_git_repositories"])
+          if gate["state"]!="PASS_SCOPED":
+              print("BLOCKED_PARTIAL_SOURCES_NOT_ZERO")
               raise SystemExit(2)
           print("PASS_SCOPED_NOT_WARC_NOT_HUMAN_AUTHORSHIP")
           PY
