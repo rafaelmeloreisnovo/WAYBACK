@@ -150,7 +150,7 @@ static unsigned int days_month(unsigned int m,unsigned int y) {
   return (unsigned int)d[m-1U]+(m==2U&&(unsigned int)leap(y));
 }
 static int parse14(const unsigned char *p,unsigned long long *seconds,
-                   unsigned int *year,unsigned int *month,unsigned int *tod) {
+                   unsigned int *year,unsigned int *month,unsigned int *day,unsigned int *tod) {
   unsigned int x[6]={0U,0U,0U,0U,0U,0U},lengths[6]={4U,2U,2U,2U,2U,2U};
   unsigned int i,j,k=0U,days=0U,y,m;
   if(!p)return -1;
@@ -166,22 +166,26 @@ static int parse14(const unsigned char *p,unsigned long long *seconds,
   days+=x[2]-1U;
   *tod=x[3]*3600U+x[4]*60U+x[5];
   *seconds=(unsigned long long)days*86400ULL+(unsigned long long)*tod;
-  *year=y;*month=m;
+  *year=y;*month=m;*day=x[2];
   return 0;
 }
 int raf_stamp_compare(const unsigned char *a14,const unsigned char *b14,
                       unsigned int window_seconds,struct raf_time_match *out) {
   unsigned long long a,b,g;
-  unsigned int ya,yb,ma,mb,ta,tb,diff;
+  unsigned int ya,yb,ma,mb,da,db,ta,tb,diff,xa,xb;
   struct raf_time_match e;
   if(!a14||!b14||!out)return -1;
-  if(parse14(a14,&a,&ya,&ma,&ta)<0||parse14(b14,&b,&yb,&mb,&tb)<0)return -1;
+  if(parse14(a14,&a,&ya,&ma,&da,&ta)<0||parse14(b14,&b,&yb,&mb,&db,&tb)<0)return -1;
   g=a>=b?a-b:b-a;diff=ta>=tb?ta-tb:tb-ta;
   if(diff>43200U)diff=86400U-diff;
   e.gap_seconds=g;
   e.within_window=(g<=(unsigned long long)window_seconds);
   e.same_clock_minute=(diff<60U);
   e.month_apart_clock_match=(g>=2419200ULL&&diff<60U);
+  xa=ya*12U+ma;xb=yb*12U+mb;
+  e.month_distance=xa>=xb?xa-xb:xb-xa;
+  e.same_calendar_day=(da==db);
+  e.exact_one_month=(e.month_distance==1U&&e.same_calendar_day&&diff<60U);
   *out=e;
   return 0;
 }
