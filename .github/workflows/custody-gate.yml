@@ -203,6 +203,65 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
+
+  memento-html-snapshots:
+    name: Historical rendered HTML replay and pure-C structural diff
+    if: ${{ github.event_name == 'pull_request' }}
+    needs: synthetic-gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact PR revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Confirm HEAD and exercise read-only archive adapter
+        env:
+          EXACT_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXACT_SHA"
+          python3 -m unittest discover -s tests -p 'test_replay_public.py' -v
+          python3 -m py_compile host/replay_public.py
+      - name: Build local C freestanding snapshot as hosted bridge
+        run: |
+          set -euo pipefail
+          cc -std=c99 -O2 -Wall -Wextra -Werror -fPIC -shared \
+            -ffreestanding -fno-builtin -fno-stack-protector \
+            core/raf_evidence_v2.c core/raf_sha256_free.c core/raf_snapshot_free.c \
+            -o /tmp/libraf-snapshot.so
+      - name: Read bounded public historical HTML replay without saving content
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python3 host/replay_public.py --core-so /tmp/libraf-snapshot.so --output out/replay
+          ( cd out/replay && sha256sum -c SHA256SUMS )
+      - name: Terminal archive-byte evidence gate
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('out/replay/receipt.json').read_text())
+          count=sum(sum('snapshot' in m for m in rec['mementos'])
+                    for rec in r['targets'].values())
+          print('OBSERVED_REPLAY_HTML_COUNT='+str(count))
+          if count==0:
+              print('BLOCKED_WAYBACK_HTML_NO_SOURCE_BYTES')
+              raise SystemExit(2)
+          print('PASS_SCOPED_WAYBACK_REPLAY_NOT_ORIGINAL_WARC')
+          PY
+      - name: Append-only evidence artifact (hashes and counts only)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: wayback-replay-source-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/replay/
+          if-no-files-found: warn
+          retention-days: 90
+
   manually-authorized-public-get:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_live && inputs.human_public_fetch_authorization }}
     needs: synthetic-gates
