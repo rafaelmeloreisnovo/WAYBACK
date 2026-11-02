@@ -22,6 +22,14 @@ WEB={
  "reis_root":("www.reisoffice.com.br","/"),
 }
 ERAS=(("1996","2005"),("2006","2018"),("2019","2026"))
+# Prior observed timestamp/path pairs: WAYBACK Actions 41387565492,
+# artifact 13115766821. Pinned replay is NOT independently verified WARC.
+PINNED={
+ "cesar_prodfto":(("20060919065932","http://www.cesarreis.com.br/telas/prodfto.asp"),
+                  ("20080220071408","http://www.cesarreis.com.br/telas/prodfto.asp")),
+ "reis_root":(("20080501153240","http://www.reisoffice.com.br/"),
+              ("20080630181756","http://www.reisoffice.com.br/"))
+}
 API_KINDS=("commits","pulls","issues","issues/comments","pulls/comments","comments")
 PROVIDER_LIMIT=10
 CDX_LIMIT=3
@@ -264,6 +272,21 @@ def collect_web(lib):
      try:entry["analysis"]=analyze_html(lib,body)
      except Exception as e:entry["state"]="TOKEN_VAZIO_C_REJECTED_"+type(e).__name__
     obj["mementos"].append(entry)
+  # Evidence anchors from the previous independent Wayback replay run.
+  # Never use the pinned dates as a substitute for current CDX metadata.
+  observed={x["capture_utc"] for x in obj["mementos"]}
+  for timestamp,original in PINNED.get(name,()):
+   if timestamp in observed:continue
+   url=replay_url(name,timestamp,original)
+   body,status=get(url,MAX_BYTES)
+   entry={"capture_utc":timestamp,"source_ref_sha256":digest(url),
+          "provider_digest":"TOKEN_VAZIO_PREVIOUS_RECEIPT",
+          "state":status,"evidence_locator":"PINNED_PRIOR_RUN_41387565492"}
+   if body is not None:
+    try:entry["analysis"]=analyze_html(lib,body)
+    except Exception as e:entry["state"]="TOKEN_VAZIO_C_REJECTED_"+type(e).__name__
+   obj["mementos"].append(entry)
+  obj["mementos"].sort(key=lambda x:x["capture_utc"])
   changes=[]
   ms=obj["mementos"]
   for i in range(1,len(ms)):
