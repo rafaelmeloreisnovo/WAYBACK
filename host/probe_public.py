@@ -107,7 +107,9 @@ def read_git(payload):
 
 class TimeMatch(ctypes.Structure):
     _fields_=[("gap_seconds",ctypes.c_ulonglong),("within_window",ctypes.c_uint),
-      ("same_clock_minute",ctypes.c_uint),("month_apart_clock_match",ctypes.c_uint)]
+      ("same_clock_minute",ctypes.c_uint),("month_apart_clock_match",ctypes.c_uint),
+      ("month_distance",ctypes.c_uint),("same_calendar_day",ctypes.c_uint),
+      ("exact_one_month",ctypes.c_uint)]
 
 def load_core(path):
     lib=ctypes.CDLL(str(path))
@@ -129,8 +131,14 @@ def compare(archive,commits,fn):
                         flagged.append({"archive_host":origin,"archive_timestamp":a["timestamp"],
                           "git_repo":repo,"git_sha":c["sha"],"git_timestamp":c["timestamp"],
                           "gap_seconds":int(out.gap_seconds),
-                          "classification":"CLOCK_COINCIDENCE_NOT_CAUSAL_EVIDENCE"
-                          if out.month_apart_clock_match else "NEAR_TIME_NOT_CAUSAL_EVIDENCE"})
+                          "month_distance":int(out.month_distance),
+                          "same_calendar_day":bool(out.same_calendar_day),
+                          "exact_one_month":bool(out.exact_one_month),
+                          "classification":("EXACT_ONE_MONTH_SAME_CLOCK_NOT_CAUSAL_EVIDENCE"
+                            if out.exact_one_month else
+                            "SAME_CLOCK_DIFFERENT_DATE_NOT_CAUSAL_EVIDENCE"
+                            if out.month_apart_clock_match else
+                            "NEAR_TIME_NOT_CAUSAL_EVIDENCE")})
                         if len(flagged)>=MAX_FLAGS:return flagged,True
     return flagged,False
 
@@ -170,6 +178,8 @@ def main():
     print("WAYBACK_PUBLIC_PROBE="+json.dumps({"sources":status,
       "archive_samples":{k:len(v) for k,v in archive.items()},
       "git_samples":{k:len(v) for k,v in commits.items()},
-      "clock_candidates":len(matches),"claim_allowed":False},sort_keys=True))
+      "clock_candidates":len(matches),
+      "exact_month_matches":sum(bool(r["exact_one_month"]) for r in matches),
+      "claim_allowed":False},sort_keys=True))
 if __name__=="__main__":
     main()
