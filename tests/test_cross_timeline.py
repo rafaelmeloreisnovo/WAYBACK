@@ -19,6 +19,8 @@ class CrossTimelineTests(unittest.TestCase):
             self.assertEqual(sum(d in x for x in v), 4)
         self.assertIn("http://cesarreis.com.br/", v)
         self.assertIn("https://www.reisoffice.com.br/", v)
+        self.assertIn("http://reisoffice.com/", v)
+        self.assertIn("https://www.reisoffice.com/", v)
 
     def test_https_archive_transport_and_no_open_redirect(self):
         self.assertTrue(m.approved(m.cdx_url(m.variants()[0])))
