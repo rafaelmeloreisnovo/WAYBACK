@@ -5,7 +5,9 @@
 #ifndef RAF_DATE_MARKERS_H
 #define RAF_DATE_MARKERS_H
 enum { RAF_DATE_ISO=1, RAF_DATE_SLASH_YMD=2,
-       RAF_DATE_COMPACT_YMD=3, RAF_DATE_SLASH_DMY=4,\n       RAF_DATE_UNDER_YMD=5, RAF_DATE_DASH_DMY=6,\n       RAF_DATE_UNDER_DMY=7, RAF_DATE_DOT_DMY=8 };
+       RAF_DATE_COMPACT_YMD=3, RAF_DATE_SLASH_DMY=4,
+       RAF_DATE_UNDER_YMD=5, RAF_DATE_DASH_DMY=6,
+       RAF_DATE_UNDER_DMY=7, RAF_DATE_DOT_DMY=8 };
 struct raf_date_marker {
   unsigned int begin, end, yyyymmdd, notation;
 };
