@@ -340,6 +340,24 @@ def collect_github():
   out[repo]=obj
  return out
 
+def git_uniqueness(git):
+ keys=set();total=0;shadow=0
+ for repo,v in git.items():
+  for kind,rows in v["records"].items():
+   for item in rows:
+    total+=1
+    if kind=="commits":key=(repo,"commit",item.get("sha"))
+    elif kind in ("pulls","issues"):key=(repo,item.get("type"),item.get("number"))
+    else:key=(repo,kind,item.get("comment_id"))
+    if key in keys:shadow+=1
+    keys.add(key)
+ official={x["sha"] for x in git[REPOS[0]]["records"].get("commits",[])}
+ fork={x["sha"] for x in git[REPOS[1]]["records"].get("commits",[])}
+ return {"provider_rows":total,"unique_scoped_ids":len(keys),
+  "duplicate_pr_issue_shadows_or_ids":shadow,
+  "same_sha_in_both_scoped_repo_samples":len(official&fork),
+  "scope":"sampled provider observations, not global repository history or personal actions"}
+
 def temporal_crosswalk(web,git):
  web_days=[]
  for name,scope in web.items():
@@ -378,7 +396,9 @@ def main():
    "observed_utc":dt.datetime.now(dt.timezone.utc).isoformat(),
    "source_boundaries":{"WAYBACK":"public replay HTML bytes, not original WARC",
     "GITHUB":"public REST API event metadata, not proof of human actor"},
-   "archive":web,"github":git,"temporal_crosswalk":temporal_crosswalk(web,git),
+   "archive":web,"github":git,
+   "git_scope_uniqueness":git_uniqueness(git),
+   "temporal_crosswalk":temporal_crosswalk(web,git),
    "rights":"TOKEN_VAZIO_REVIEW_REQUIRED","human_operator":"TOKEN_VAZIO_NOT_ATTESTED",
    "html_bodies_published":False,"photo_bodies_downloaded":False,
    "comment_bodies_published":False,"claim_allowed":False}
@@ -390,6 +410,7 @@ def main():
   "archive":{k:{"mementos":sum("analysis" in x for x in v["mementos"]),
                   "status":v["query_statuses"]} for k,v in record.get("archive",{}).items()},
   "github":{k:{kind:len(v["records"][kind]) for kind in API_KINDS} for k,v in record.get("github",{}).items()},
+  "git_unique":record.get("git_scope_uniqueness",{}).get("unique_scoped_ids","TOKEN_VAZIO"),
   "temporal_pairs":record.get("temporal_crosswalk",{}).get("observed_pairs","TOKEN_VAZIO")},
   sort_keys=True))
 if __name__=="__main__":main()
