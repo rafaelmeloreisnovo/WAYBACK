@@ -21,6 +21,9 @@ WEB={
  "cesar_prodfto":("www.cesarreis.com.br","/telas/prodfto.asp"),
  "reis_root":("www.reisoffice.com.br","/"),
 }
+# Exact public publisher route linked to the historical photo notice.
+NEWS={"ace_event":("www.aceguarulhos.com.br","/blog/sucesso-no-evento-dos-40-anos-da-ace-guarulhos-1/")}
+TARGETS={**WEB,**NEWS}
 ERAS=(("1996","2005"),("2006","2018"),("2019","2026"))
 # Prior observed timestamp/path pairs: WAYBACK Actions 41387565492,
 # artifact 13115766821. Pinned replay is NOT independently verified WARC.
@@ -54,8 +57,8 @@ def github_url(repo,kind):
  return base+"?"+urllib.parse.urlencode(q)
 
 def cdx_url(name,era):
- if name not in WEB or era not in ERAS:raise ValueError("UNAUTHORIZED_ARCHIVE_SCOPE")
- host,path=WEB[name]
+ if name not in TARGETS or era not in ERAS:raise ValueError("UNAUTHORIZED_ARCHIVE_SCOPE")
+ host,path=TARGETS[name]
  return "https://web.archive.org/cdx/search/cdx?"+urllib.parse.urlencode({
   "url":host+path,"output":"json",
   "fl":"timestamp,original,statuscode,mimetype,digest,length",
@@ -65,14 +68,14 @@ def cdx_url(name,era):
 def origin_allowed(original,name):
  try:
   p=urllib.parse.urlsplit(original)
-  host,path=WEB[name]
+  host,path=TARGETS[name]
   return (p.scheme in ("http","https") and p.hostname==host and
     p.path.lower()==path.lower() and p.port in (None,80,443) and
     not p.username and not p.password and not p.query and not p.fragment)
  except ValueError:return False
 
 def replay_url(name,timestamp,original):
- if name not in WEB or not origin_allowed(original,name) or not re.fullmatch(r"[0-9]{14}",timestamp):
+ if name not in TARGETS or not origin_allowed(original,name) or not re.fullmatch(r"[0-9]{14}",timestamp):
   raise ValueError("MEMENTO_SOURCE_MISMATCH")
  return "https://web.archive.org/web/"+timestamp+"id_/"+original
 
@@ -290,7 +293,7 @@ def compare_replays(mementos):
 
 def collect_web(lib):
  out={}
- for name in WEB:
+ for name in TARGETS:
   obj={"query_statuses":{},"mementos":[],"coverage":"SAMPLED_NOT_EXHAUSTIVE"}
   for era in ERAS:
    key=era[0]+"_"+era[1]
@@ -405,11 +408,12 @@ def git_uniqueness(git):
   "scope":"sampled provider observations, not global repository history or personal actions"}
 
 def terminal_coverage(web,git):
- missing_archive=[name for name,v in web.items()
-                  if not any("analysis" in m for m in v["mementos"])]
+ missing_archive=[name for name in WEB
+                  if not any("analysis" in m for m in web.get(name,{}).get("mementos",[]))]
  missing_git=[repo for repo,v in git.items()
               if not v["records"].get("commits")]
  return {"state":"PASS_SCOPED" if not missing_archive and not missing_git else "BLOCKED_PARTIAL_SOURCES",
+         "supplemental_news_status":{name:("REPLAY_OBSERVED" if any("analysis" in m for m in web.get(name,{}).get("mementos",[])) else "TOKEN_VAZIO_NEWS_REPLAY") for name in NEWS},
          "required_archive_targets":list(WEB),"missing_archive_targets":missing_archive,
          "required_git_repositories":list(REPOS),"missing_git_repositories":missing_git,
          "rule":"Every requested site has >=1 HTML replay and every required Git repo has >=1 commit. No WARC/rights/authorship claims."}
