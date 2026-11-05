@@ -94,4 +94,24 @@ class FofiTests(unittest.TestCase):
   web["cesar_prodfto"]["mementos"]=[{"analysis":{"raw":"known"}}]
   web["reis_root"]["mementos"]=[{"analysis":{"raw":"known"}}]
   self.assertEqual(m.terminal_coverage(web,git)["state"],"PASS_SCOPED")
+ def test_http_https_are_distinct(self):
+  def capture(url,ts):
+   return {"original_url":url,"capture_utc":ts,"analysis":{}}
+  self.assertEqual(m.compare_replays([capture("http://example/","1"),capture("https://example/","2")]),[])
+ def test_patch_markers_are_directional_and_calendar_valid(self):
+  from unittest.mock import patch
+  sha="a"*40
+  payload={"sha":sha,"files":[{"filename":"a.c","patch":"-2008-02-29\n+2009-02-29\n context 2003-01-01"},{"filename":"a.jpg"}]}
+  with patch.object(m,"get",return_value=(json.dumps(payload),"OK_200")):
+   sample=m.patch_sample(m.REPOS[0],sha)
+   missing=m.patch_sample(m.REPOS[0],"b"*40)
+  self.assertEqual(missing["state"],"TOKEN_VAZIO_COMMIT_DETAIL_SCHEMA")
+  self.assertTrue(m.permitted(sample["url"]))
+  self.assertEqual(sample["files"][1]["patch_state"],"TOKEN_VAZIO_PATCH")
+  self.assertEqual(sample["files"][0]["date_literals_first_16"],[{"literal":"2008-02-29","side":"removed"}])
+  cap={"original_url":"http://example/","capture_utc":"20100301000000","analysis":{"date_marker_examples":[{"yyyymmdd":20080229}]}}
+  result=m.code_literal_crosswalk({"test":{"mementos":[cap]}},{m.REPOS[0]:{"code_change_sample":sample}})
+  self.assertEqual(result["observed_pairs"],1)
+  self.assertEqual(result["examples"][0]["html_marker"]["capture_utc"],cap["capture_utc"])
 if __name__=="__main__":unittest.main()
+
