@@ -65,6 +65,7 @@ jobs:
           assert any(x["context"]=="IMAGE_TAG_LITERAL" for x in r["sample"]["date_marker_examples"])
           PY
       - name: Preserve test-only evidence
+        continue-on-error: true
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
@@ -110,6 +111,27 @@ jobs:
               print("BLOCKED_PARTIAL_SOURCES_NOT_ZERO")
               raise SystemExit(2)
           print("PASS_SCOPED_NOT_WARC_NOT_HUMAN_AUTHORSHIP")
+          PY
+      - name: Record public receipt for inspection independently of artifact availability
+        if: ${{ always() && hashFiles('out/public/receipt.json') != '' }}
+        run: |
+          set -euo pipefail
+          cd out/public
+          sha256sum -c SHA256SUMS
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          record = json.loads(Path("receipt.json").read_bytes())
+          for section, value in record.items():
+              # Public receipt sections only. Keep lines below runner log limits.
+              serialized = json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+              for offset in range(0, len(serialized), 2048):
+                  print("FOFI_SECTION " + json.dumps([section, offset, serialized[offset:offset+2048]]))
+          checksum = Path("SHA256SUMS").read_text().split()[0]
+          print("FOFI_RECEIPT_SHA256 " + checksum)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              print("Public source coverage:", record["evidence_gate"]["state"], file=summary)
+              print("Receipt SHA-256:", checksum, file=summary)
           PY
       - name: Preserve receipts without raw images, comment bodies or HTML
         if: always()
