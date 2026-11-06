@@ -21,6 +21,9 @@ WEB={
  "cesar_prodfto":("www.cesarreis.com.br","/telas/prodfto.asp"),
  "reis_root":("www.reisoffice.com.br","/"),
 }
+# Exact public publisher route linked to the historical photo notice.
+NEWS={"ace_event":("www.aceguarulhos.com.br","/blog/sucesso-no-evento-dos-40-anos-da-ace-guarulhos-1/")}
+TARGETS={**WEB,**NEWS}
 ERAS=(("1996","2005"),("2006","2018"),("2019","2026"))
 # Prior observed timestamp/path pairs: WAYBACK Actions 41387565492,
 # artifact 13115766821. Pinned replay is NOT independently verified WARC.
@@ -54,8 +57,8 @@ def github_url(repo,kind):
  return base+"?"+urllib.parse.urlencode(q)
 
 def cdx_url(name,era):
- if name not in WEB or era not in ERAS:raise ValueError("UNAUTHORIZED_ARCHIVE_SCOPE")
- host,path=WEB[name]
+ if name not in TARGETS or era not in ERAS:raise ValueError("UNAUTHORIZED_ARCHIVE_SCOPE")
+ host,path=TARGETS[name]
  return "https://web.archive.org/cdx/search/cdx?"+urllib.parse.urlencode({
   "url":host+path,"output":"json",
   "fl":"timestamp,original,statuscode,mimetype,digest,length",
@@ -65,14 +68,14 @@ def cdx_url(name,era):
 def origin_allowed(original,name):
  try:
   p=urllib.parse.urlsplit(original)
-  host,path=WEB[name]
+  host,path=TARGETS[name]
   return (p.scheme in ("http","https") and p.hostname==host and
     p.path.lower()==path.lower() and p.port in (None,80,443) and
     not p.username and not p.password and not p.query and not p.fragment)
  except ValueError:return False
 
 def replay_url(name,timestamp,original):
- if name not in WEB or not origin_allowed(original,name) or not re.fullmatch(r"[0-9]{14}",timestamp):
+ if name not in TARGETS or not origin_allowed(original,name) or not re.fullmatch(r"[0-9]{14}",timestamp):
   raise ValueError("MEMENTO_SOURCE_MISMATCH")
  return "https://web.archive.org/web/"+timestamp+"id_/"+original
 
@@ -81,6 +84,8 @@ def permitted(url):
   p=urllib.parse.urlsplit(url)
   if p.scheme!="https" or p.username or p.password or p.fragment or p.port not in (None,443):return False
   if p.hostname=="api.github.com":
+   if any(re.fullmatch("/repos/"+re.escape(r)+"/commits/[0-9a-f]{40}",p.path) for r in REPOS):
+    return p.query=="per_page=10"
    return p.path in ["/repos/"+r+"/"+k for r in REPOS for k in API_KINDS]
   if p.hostname=="web.archive.org":
    return p.path=="/cdx/search/cdx" or bool(re.fullmatch(r"/web/[0-9]{14}id_/https?://[^/]+/.*",p.path))
@@ -215,7 +220,7 @@ def analyze_html(lib,raw):
   if rc==0:break
   if rc<0:raise ValueError("HTML_EVENT_REJECTED")
   if not(event.flags&128) and event.kind in (2,3,4,5,6,7,8):
-   ranges.append((int(event.tag.begin),int(event.tag.end),int(event.kind)))
+   resource = None
    if event.kind in (3,4,7,8):
     a,b=int(event.value.begin),int(event.value.end)
     if b<a or b>len(raw):raise ValueError("HTML_SOURCE_SPAN_OUTSIDE_BUFFER")
@@ -223,6 +228,7 @@ def analyze_html(lib,raw):
      edge_occurrences+=1
      value=raw[a:b]
      identifier=digest(value)
+     resource=(a,b,identifier)
      path=value.split(b"?",1)[0].split(b"#",1)[0].lower()
      extension=path.rsplit(b".",1)[-1] if b"." in path else b""
      if extension not in (b"asp",b"htm",b"html",b"jpg",b"jpeg",b"png",
@@ -230,6 +236,7 @@ def analyze_html(lib,raw):
      edge_map.setdefault(identifier,{"href_sha256":identifier,
        "source_tag":{3:"ANCHOR",4:"IMAGE_REF",7:"SCRIPT_REF",8:"RESOURCE_REF"}.get(event.kind,"OTHER"),
        "extension":extension.decode("ascii")})
+   ranges.append((int(event.tag.begin),int(event.tag.end),int(event.kind),resource))
  cur=ctypes.c_uint(0);mark=Marker();dates=[];total=0
  while True:
   rc=lib.raf_next_date(buffer,len(raw),ctypes.byref(cur),ctypes.byref(mark))
@@ -238,14 +245,17 @@ def analyze_html(lib,raw):
   total+=1
   if len(dates)<MAX_MARKERS:
    context="HTML_TEXT_OR_SCRIPT_UNKNOWN"
-   for a,b,k in ranges:
+   marker_resource=None
+   for a,b,k,resource in ranges:
     if a<=mark.begin and mark.end<=b:
+     if resource and resource[0]<=mark.begin and mark.end<=resource[1]:
+      marker_resource=resource[2]
      context={2:"HTML_COMMENT_LITERAL",3:"LINK_TAG_LITERAL",4:"IMAGE_TAG_LITERAL",
               5:"FORM_TAG_LITERAL",6:"META_TAG_LITERAL",7:"SCRIPT_TAG_LITERAL",
               8:"RESOURCE_TAG_LITERAL"}.get(k,"OTHER_TAG_LITERAL")
      break
    dates.append({"yyyymmdd":int(mark.yyyymmdd),"notation":int(mark.notation),
-                 "context":context,"byte_offset":int(mark.begin)})
+                 "context":context,"attribute_value_sha256":marker_resource,"byte_offset":int(mark.begin)})
  fields=("links","images","comments","forms","scripts","keywords","description",
   "post_forms","get_forms","onsubmit_forms","asp_refs","inc_refs")
  return {"html_replay_sha256":bytes(snap.raw_sha256).hex(),
@@ -262,9 +272,28 @@ def analyze_html(lib,raw):
   "edge_examples_truncated":len(edge_map)>64,
   "edge_semantics":"RAW_REPLAY_ATTRIBUTE_HASH_NOT_CANONICAL_ORIGIN_LINK"}
 
+def compare_replays(mementos):
+ changes=[]
+ previous={}
+ for b in sorted(mementos,key=lambda row:row["capture_utc"]):
+  original=b["original_url"]
+  a=previous.get(original)
+  previous[original]=b
+  if a and a["capture_utc"]!=b["capture_utc"] and "analysis" in a and "analysis" in b:
+    x,y=a["analysis"],b["analysis"]
+    changes.append({"original_url":original,"from":a["capture_utc"],"to":b["capture_utc"],
+      "body_changed":x["html_replay_sha256"]!=y["html_replay_sha256"],
+      "keywords_changed":x["keywords_value_sha256"]!=y["keywords_value_sha256"],
+      "links_count_changed":x["counts"]["links"]!=y["counts"]["links"],
+      "image_count_changed":x["counts"]["images"]!=y["counts"]["images"],
+      "distinct_edge_count_changed":x["distinct_hashed_edges"]!=y["distinct_hashed_edges"],
+      "edge_set_changed":x["edge_index_sha256"]!=y["edge_index_sha256"],
+      "source_class":"REPLAY_HTML_NOT_ORIGINAL_WARC"})
+ return changes
+
 def collect_web(lib):
  out={}
- for name in WEB:
+ for name in TARGETS:
   obj={"query_statuses":{},"mementos":[],"coverage":"SAMPLED_NOT_EXHAUSTIVE"}
   for era in ERAS:
    key=era[0]+"_"+era[1]
@@ -285,7 +314,7 @@ def collect_web(lib):
     ts=item["timestamp"]
     url=replay_url(name,ts,item["original"])
     body,status=get(url,MAX_BYTES)
-    entry={"capture_utc":ts,"source_ref_sha256":digest(url),
+    entry={"original_url":item["original"],"capture_utc":ts,"source_ref_sha256":digest(url),
       "provider_digest":str(item.get("digest",""))[:80],"state":status,
       "evidence_locator":"CURRENT_BOUNDED_CDX"}
     if body is not None:
@@ -294,12 +323,12 @@ def collect_web(lib):
     obj["mementos"].append(entry)
   # Evidence anchors from the previous independent Wayback replay run.
   # Never use the pinned dates as a substitute for current CDX metadata.
-  observed={x["capture_utc"] for x in obj["mementos"]}
+  observed={(x["capture_utc"],x["original_url"]) for x in obj["mementos"]}
   for timestamp,original in PINNED.get(name,()):
-   if timestamp in observed:continue
+   if (timestamp,original) in observed:continue
    url=replay_url(name,timestamp,original)
    body,status=get(url,MAX_BYTES)
-   entry={"capture_utc":timestamp,"source_ref_sha256":digest(url),
+   entry={"original_url":original,"capture_utc":timestamp,"source_ref_sha256":digest(url),
           "provider_digest":"TOKEN_VAZIO_PREVIOUS_RECEIPT",
           "state":status,"evidence_locator":"PINNED_PRIOR_RUN_41387565492"}
    if body is not None:
@@ -307,23 +336,41 @@ def collect_web(lib):
     except Exception as e:entry["state"]="TOKEN_VAZIO_C_REJECTED_"+type(e).__name__
    obj["mementos"].append(entry)
   obj["mementos"].sort(key=lambda x:x["capture_utc"])
-  changes=[]
-  ms=obj["mementos"]
-  for i in range(1,len(ms)):
-   a,b=ms[i-1],ms[i]
-   if "analysis" in a and "analysis" in b:
-    x,y=a["analysis"],b["analysis"]
-    changes.append({"from":a["capture_utc"],"to":b["capture_utc"],
-      "body_changed":x["html_replay_sha256"]!=y["html_replay_sha256"],
-      "keywords_changed":x["keywords_value_sha256"]!=y["keywords_value_sha256"],
-      "links_count_changed":x["counts"]["links"]!=y["counts"]["links"],
-      "image_count_changed":x["counts"]["images"]!=y["counts"]["images"],
-      "distinct_edge_count_changed":x["distinct_hashed_edges"]!=y["distinct_hashed_edges"],
-      "edge_set_changed":x["edge_index_sha256"]!=y["edge_index_sha256"],
-      "source_class":"REPLAY_HTML_NOT_ORIGINAL_WARC"})
-  obj["changes"]=changes
+  obj["changes"]=compare_replays(obj["mementos"])
   out[name]=obj
  return out
+
+def patch_sample(repo,sha):
+ # One immutable commit per repository, first provider page only.
+ url="https://api.github.com/repos/"+repo+"/commits/"+sha+"?per_page=10"
+ raw,state=get(url,MAX_API)
+ result={"commit_sha":sha,"url":url,"state":state,"scope":"FIRST_TEN_FILE_RECORDS"}
+ if raw is None:return result
+ try:
+  data=json.loads(raw)
+  if not isinstance(data,dict) or data.get("sha")!=sha or not isinstance(data.get("files"),list):
+   raise ValueError("COMMIT_DETAIL_SCHEMA")
+  files=[]
+  for item in data["files"][:10]:
+   if not isinstance(item,dict) or not isinstance(item.get("filename"),str):
+    raise ValueError("COMMIT_FILE_SCHEMA")
+   patch=item.get("patch")
+   markers=[]
+   if isinstance(patch,str):
+    for line in patch.splitlines():
+     if line[:1] not in ("+","-"):continue
+     for token in re.findall(r"(?<![0-9])[0-9]{4}-[0-9]{2}-[0-9]{2}(?![0-9])",line[1:]):
+      try:dt.date.fromisoformat(token)
+      except ValueError:continue
+      markers.append({"literal":token,"side":"added" if line[0]=="+" else "removed"})
+      if len(markers)==16:break
+     if len(markers)==16:break
+   files.append({"path":item["filename"],"patch_sha256":digest(patch) if isinstance(patch,str) else None,
+    "patch_state":"PROVIDER_FRAGMENT" if isinstance(patch,str) else "TOKEN_VAZIO_PATCH",
+    "date_literals_first_16":markers})
+  result["files"]=files
+ except (ValueError,TypeError):result["state"]="TOKEN_VAZIO_COMMIT_DETAIL_SCHEMA"
+ return result
 
 def collect_github():
  out={}
@@ -337,6 +384,8 @@ def collect_github():
    except Exception as e:
     obj["records"][kind]=[]
     obj["status"][kind]="TOKEN_VAZIO_SCHEMA_"+type(e).__name__
+  commits=obj["records"]["commits"]
+  obj["code_change_sample"]=patch_sample(repo,commits[0]["sha"]) if commits else {"state":"TOKEN_VAZIO_COMMIT"}
   out[repo]=obj
  return out
 
@@ -359,11 +408,12 @@ def git_uniqueness(git):
   "scope":"sampled provider observations, not global repository history or personal actions"}
 
 def terminal_coverage(web,git):
- missing_archive=[name for name,v in web.items()
-                  if not any("analysis" in m for m in v["mementos"])]
+ missing_archive=[name for name in WEB
+                  if not any("analysis" in m for m in web.get(name,{}).get("mementos",[]))]
  missing_git=[repo for repo,v in git.items()
               if not v["records"].get("commits")]
  return {"state":"PASS_SCOPED" if not missing_archive and not missing_git else "BLOCKED_PARTIAL_SOURCES",
+         "supplemental_news_status":{name:("REPLAY_OBSERVED" if any("analysis" in m for m in web.get(name,{}).get("mementos",[])) else "TOKEN_VAZIO_NEWS_REPLAY") for name in NEWS},
          "required_archive_targets":list(WEB),"missing_archive_targets":missing_archive,
          "required_git_repositories":list(REPOS),"missing_git_repositories":missing_git,
          "rule":"Every requested site has >=1 HTML replay and every required Git repo has >=1 commit. No WARC/rights/authorship claims."}
@@ -390,6 +440,28 @@ def temporal_crosswalk(web,git):
           "classification":"SAME_CALENDAR_DAY_NOT_CAUSAL_EVIDENCE"})
  return {"observed_pairs":total,"candidates":candidates,"truncated":total>MAX_PAIRS}
 
+def code_literal_crosswalk(web,git):
+ index={}
+ for target,scope in web.items():
+  for capture in scope["mementos"]:
+   for mark in capture.get("analysis",{}).get("date_marker_examples",[]):
+    key=str(mark["yyyymmdd"])
+    index.setdefault(key,[]).append({"target":target,"original_url":capture["original_url"],
+     "capture_utc":capture["capture_utc"],"marker":mark})
+ pairs=[]
+ count=0
+ for repo,scope in git.items():
+  sample=scope.get("code_change_sample",{})
+  for file in sample.get("files",[]):
+   for marker in file["date_literals_first_16"]:
+    for hit in index.get(marker["literal"].replace("-",""),[]):
+     count+=1
+     if len(pairs)<MAX_PAIRS:
+      pairs.append({"repository":repo,"commit_sha":sample["commit_sha"],"path":file["path"],
+       "patch_sha256":file["patch_sha256"],"code_marker":marker,"html_marker":hit})
+ return {"observed_pairs":count,"examples":pairs,"truncated":count>len(pairs),
+  "scope":"PROVIDER_PATCH_AND_REPLAY_SAMPLES_ONLY","classification":"EQUAL_DATE_LITERAL_ONLY"}
+
 def main():
  ap=argparse.ArgumentParser()
  ap.add_argument("--core-so",required=True)
@@ -410,6 +482,7 @@ def main():
    "git_scope_uniqueness":git_uniqueness(git),
    "evidence_gate":terminal_coverage(web,git),
    "temporal_crosswalk":temporal_crosswalk(web,git),
+   "code_literal_crosswalk":code_literal_crosswalk(web,git),
    "rights":"TOKEN_VAZIO_REVIEW_REQUIRED","human_operator":"TOKEN_VAZIO_NOT_ATTESTED",
    "html_bodies_published":False,"photo_bodies_downloaded":False,
    "comment_bodies_published":False,"claim_allowed":False}
@@ -426,3 +499,4 @@ def main():
   "temporal_pairs":record.get("temporal_crosswalk",{}).get("observed_pairs","TOKEN_VAZIO")},
   sort_keys=True))
 if __name__=="__main__":main()
+
